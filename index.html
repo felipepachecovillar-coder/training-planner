@@ -468,8 +468,8 @@ function render() {
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         ${syncEnabled ? `
-          <button onclick="loadFromCloud()" title="Sincronizar" style="border:none;background:transparent;cursor:pointer;font-size:16px;padding:2px 4px;color:${syncStatus==='ok'?'#1D9E75':syncStatus==='error'?'#e24b4a':syncStatus==='syncing'?'#BA7517':'#888'}">
-            ${syncStatus==='syncing'?'↻':syncStatus==='ok'?'✓':syncStatus==='error'?'✕':'↻'}
+          <button id="syncIcon" onclick="if(!_syncing)loadFromCloud()" title="Sincronizar" style="border:none;background:transparent;cursor:pointer;font-size:16px;padding:2px 4px;color:${syncStatus==='ok'?'#1D9E75':syncStatus==='error'?'#e24b4a':'#888'}">
+            ${syncStatus==='ok'?'✓':syncStatus==='error'?'✕':'↻'}
           </button>
         ` : ''}
         ${state.mesoList.length > 1 ? `
