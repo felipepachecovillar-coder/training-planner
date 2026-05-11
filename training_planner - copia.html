@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Training Planner — Felipe Pacheco</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f3; color: #1a1a1a; min-height: 100vh; }
+  .app { max-width: 720px; margin: 0 auto; background: #fff; min-height: 100vh; border-left: 0.5px solid #e0dfd8; border-right: 0.5px solid #e0dfd8; }
+  button { font-family: inherit; cursor: pointer; }
+  select, input { font-family: inherit; }
+  input[type=number]::-webkit-inner-spin-button { opacity: 1; }
+
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 12px; border-bottom: 0.5px solid #e0dfd8; }
+  .header-title { font-size: 16px; font-weight: 500; }
+  .header-sub { font-size: 12px; color: #888; margin-left: 8px; }
+  .view-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 0.5px solid #ccc; }
+  .view-btn { padding: 5px 12px; border: none; background: transparent; color: #888; font-size: 12px; cursor: pointer; transition: background 0.15s; }
+  .view-btn.active { background: #e0dfd8; color: #1a1a1a; font-weight: 500; }
+
+  .day-nav { display: flex; gap: 4px; padding: 8px 16px; border-bottom: 0.5px solid #e0dfd8; overflow-x: auto; }
+  .day-btn { padding: 4px 12px; border-radius: 8px; border: 0.5px solid #e0dfd8; background: transparent; color: #888; font-size: 12px; white-space: nowrap; transition: all 0.15s; }
+  .day-btn.active { color: #fff; font-weight: 500; }
+
+  .week-nav { display: flex; align-items: center; gap: 3px; padding: 8px 16px; border-bottom: 0.5px solid #e0dfd8; overflow-x: auto; }
+  .week-btn { min-width: 32px; height: 28px; border-radius: 8px; border: 0.5px solid #e0dfd8; background: transparent; color: #888; font-size: 11px; transition: all 0.15s; }
+  .phase-badge { font-size: 11px; padding: 2px 8px; border-radius: 8px; font-weight: 500; white-space: nowrap; margin-left: 6px; }
+
+  .table-header { display: flex; padding: 5px 16px; background: #f5f5f3; border-bottom: 0.5px solid #e0dfd8; }
+  .th { font-size: 11px; color: #888; font-weight: 500; }
+
+  .ex-row { border-bottom: 0.5px solid #e0dfd8; }
+  .ex-main { display: flex; align-items: center; padding: 7px 16px; cursor: pointer; transition: background 0.1s; }
+  .ex-main:hover { background: #f9f9f7; }
+  .ex-main.expanded { background: #f5f5f3; }
+  .ex-main.skip { opacity: 0.4; cursor: default; }
+  .ex-expand { padding: 8px 16px 10px; background: #f5f5f3; display: flex; gap: 10px; }
+  .ex-expand input { padding: 5px 8px; font-size: 13px; border-radius: 8px; border: 0.5px solid #ccc; background: #fff; color: #1a1a1a; }
+  .ex-expand label { font-size: 11px; color: #888; display: block; margin-bottom: 3px; }
+
+  .done-btn { padding: 8px 18px; border-radius: 8px; border: none; color: #fff; font-weight: 500; font-size: 13px; cursor: pointer; transition: opacity 0.15s; }
+  .done-btn:hover { opacity: 0.85; }
+
+  .metric-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 1rem; }
+  .metric-card { background: #f5f5f3; border-radius: 8px; padding: 12px; }
+  .metric-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+  .metric-val { font-size: 20px; font-weight: 500; }
+
+  .card { background: #fff; border: 0.5px solid #e0dfd8; border-radius: 12px; overflow: hidden; margin-bottom: 0.75rem; }
+  .card-header { padding: 10px 14px; border-bottom: 0.5px solid #e0dfd8; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .card-header span { font-size: 13px; font-weight: 500; }
+  .hist-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; border-bottom: 0.5px solid #e0dfd8; font-size: 12px; }
+
+  .sync-card { background: #fff; border: 0.5px solid #e0dfd8; border-radius: 12px; padding: 20px; margin-bottom: 12px; }
+  .sync-card h3 { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
+  .sync-card p { font-size: 12px; color: #888; margin-bottom: 12px; line-height: 1.5; }
+  .btn-upload { padding: 8px 18px; border-radius: 8px; border: 0.5px solid #ccc; background: transparent; color: #1a1a1a; font-size: 13px; }
+  .btn-export { padding: 8px 18px; border-radius: 8px; border: none; color: #fff; font-size: 13px; font-weight: 500; }
+  .msg { padding: 10px 14px; border-radius: 8px; font-size: 12px; margin-top: 8px; }
+  .msg.ok { background: #e1f5ee; color: #0f6e56; }
+  .msg.err { background: #fcebeb; color: #a32d2d; }
+  .flow-note { padding: 12px 14px; background: #f5f5f3; border-radius: 8px; font-size: 12px; color: #888; line-height: 1.6; }
+
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #888; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .legend-line { width: 10px; height: 2px; display: inline-block; border-radius: 1px; }
+
+  .empty { text-align: center; color: #888; font-size: 13px; padding: 2rem 0; }
+
+  @media (max-width: 480px) {
+    .metric-grid { grid-template-columns: repeat(2,1fr); }
+    .th:nth-child(2), .ex-main > span:nth-child(2) { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<script>
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwOD4Oy-EXfeXVi9pX8QS2K3FRIkhGTA5UK6Vf1wleZPbyFZC3-Il7MgZdDem8fZGEUpg/exec";
+const STORAGE_KEY = "tp_v3";
+let syncEnabled = !!SCRIPT_URL && !SCRIPT_URL.includes("TU_URL");
+let syncStatus = "idle"; // idle | syncing | ok | error
+
+async function cloudGet() {
+  if (!syncEnabled) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const url = `${SCRIPT_URL}?action=get&t=${Date.now()}`;
+    const r = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    clearTimeout(timeout);
+    const text = await r.text();
+    const j = JSON.parse(text);
+    return j.ok ? j.data : null;
+  } catch(e) { console.log("cloudGet error:", e); return null; }
+}
+
+async function cloudSetMany(pairs) {
+  if (!syncEnabled) return;
+  try {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 12000);
+    const url = `${SCRIPT_URL}?action=setMany&pairs=${encodeURIComponent(JSON.stringify(pairs))}&t=${Date.now()}`;
+    await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      redirect: "follow",
+    });
+  } catch(e) { console.log("cloudSetMany error:", e); }
+}
+
+async function cloudSet(key, value) {
+  if (!syncEnabled) return;
+  try {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 8000);
+    const url = `${SCRIPT_URL}?action=set&key=${encodeURIComponent(key)}&value=${encodeURIComponent(value)}&t=${Date.now()}`;
+    await fetch(url, { method: "GET", signal: controller.signal, redirect: "follow" });
+  } catch(e) { console.log("cloudSet error:", e); }
+}
+const PHASE_COLORS = { "Acumulación":"#378ADD","Descarga":"#1D9E75","Intensificación":"#BA7517","Taper":"#D4537E","Max Week":"#D85A30" };
+const MESO_COLORS = ["#378ADD","#1D9E75","#BA7517","#D4537E","#D85A30","#534AB7"];
+const MESO_DASHES = [[4,3],[2,2],[],[5,2],[3,3],[1,2]];
+const DEFAULT_WEEKS = Array.from({length:10},(_,i)=>({id:i+1,label:`S${i+1}`,phase:i<4?"Acumulación":i===4?"Descarga":i<8?"Intensificación":i===8?"Taper":"Max Week"}));
+const WEEKDAYS = ["Lunes","Martes","Miércoles","Jueves","Viernes"];
+const DEFAULT_DAYS = [{id:1,label:"Lunes",name:"Upper Body"},{id:2,label:"Martes",name:"Lower A"},{id:3,label:"Miércoles",name:"Upper Push"},{id:4,label:"Jueves",name:"Upper Pull"},{id:5,label:"Viernes",name:"Lower B"}];
+
+const DEFAULT_DATA = {
+  1:[
+    {name:"Press Banca",details:"",rest:"3min",weeks:["3x4 72%","3x4 74%","3x4 76%","3x4 78%","3x6 73%","3x4 80%","3x4 82%","3x3 84%","5x4 81%","1x1 @9,5"]},
+    {name:"Spoto Press",details:"",rest:"",weeks:["2x8 @7","3x8 @7,5","3x7 @8","3x7 @8,5","-","3x6 @7","3x5 @7,5","2x5 @8","1x5 @7","-"]},
+    {name:"Remo T",details:"Agarre prono",rest:"90seg",weeks:["3x8 @7","3x8 @7,5","3x8 @7,5-8","3x8 @8","3x8 @7","2x6 @7","2x6 @7-8","2x6 @7-8","1x5 @7","1x5 @7"]},
+    {name:"Press inclinado mancuernas",details:"",rest:"90seg",weeks:["2x6 @7","3x6 @7,5","3x6 @8","3x6 @8,5","2x6 @7","2x5 @7,5","2x5 @8","2x5 @8,5","1x5 @7","1x5 @7"]},
+    {name:"Pull Over mancuerna",details:"",rest:"60seg",weeks:["2x9-12 @7-8","2x9-12 @7-9","2x9-12 @7-9","2x9-12 @7-9","2x9-12 @7","2x7-9 @7-7,5","2x7-9 @7-7,5","2x7-9 @7-7,5","1x7-9 @7","1x7-9 @7"]},
+    {name:"Tríceps unilateral tras nuca",details:"",rest:"60-90seg",weeks:["3x9-12 @8-9","3x9-12 @8-10","3x9-12 @8-10","3x9-12 @8-10","3x9-12 @8","2x7-9 @8-10","2x7-9 @8-10","2x7-9 @8-10","1x7-9 @8","1x7-9 @8"]},
+    {name:"Curl máquina unilateral",details:"",rest:"60-90seg",weeks:["3x9-12 @8-9","3x9-12 @8-10","3x9-12 @8-10","3x9-12 @8-10","3x9-12 @8","2x7-9 @8-10","2x7-9 @8-10","2x7-9 @8-10","1x7-9 @8","1x7-9 @8"]},
+  ],
+  2:[
+    {name:"Sentadilla",details:"",rest:"3min",weeks:["1x3 80% / 2x8 69%","1x3 82% / 2x8 71%","1x3 84% / 2x7 73%","1x3 86% / 2x7 75%","3x5 73%","1x1 @6,5 / 4x3 85%","1x1 @7,5 / 4x3 87%","1x1 @8,5 / 4x2 89%","5x2 80%","1x1 @9,5"]},
+    {name:"Hip thrust",details:"",rest:"90-120seg",weeks:["3x8 @7","3x8 @7,5","3x8 @7,5-8","3x8 @8","2x8 @7","2x6 @7","2x6 @7,5","2x6 @7,5","2x6 @7","1x6 @7"]},
+    {name:"Sentadilla búlgara Smith",details:"",rest:"90-120seg",weeks:["2x8 @7","2x8 @7,5","2x8 @7,5","2x8 @7,5-8","2x8 @7","2x6 @7,5","2x6 @7,5","2x6 @7,5","1x6 @7","1x6 @7"]},
+    {name:"Abducción cadera",details:"",rest:"60-90seg",weeks:["4x9-12 @7","4x9-12 @7-8","4x9-12 @8-9","4x9-12 @8-9","3x9-12 @7","3x7-9 @7-8","3x7-9 @7-8","3x7-9 @7-8","2x7-9 @7,5","2x7-9 @7,5"]},
+    {name:"Flexor cadera",details:"",rest:"60-90seg",weeks:["3x7-9 @7","3x7-9 @7-8","3x7-9 @7-8","3x7-9 @7-8","3x7-9 @7","3x7-9 @7,5","3x7-9 @7,5","3x7-9 @7,5","2x7-9 @7","2x7-9 @7"]},
+    {name:"Gemelo parado",details:"",rest:"60seg",weeks:["4x9-12 @8-10","4x9-12 @8-10","4x9-12 @8-10","4x9-12 @8-10","3x9-12 @8","3x7-9 @8-10","3x7-9 @8-10","3x7-9 @8-10","2x7-9 @8","2x7-9 @8"]},
+  ],
+  3:[
+    {name:"Press banca Inclinado",details:"",rest:"3min",weeks:["1x3 @7 / 3x5 77%","1x3 @7,5 / 3x5 79%","1x3 @8 / 3x5 81%","1x3 @8,5 / 3x5 84%","3x4 78%","2x1 @7 / 3x4 81%","2x1 @8 / 3x4 84%","1x1 @9 / 3x4 86%","1x1 86% / 5x3 78%","1x1 @9,5"]},
+    {name:"Fondos",details:"",rest:"90seg",weeks:["3x6 @7","3x6 @7,5","3x6 @8","3x6 @8,5","2x6 @7","3x5 @7","3x5 @7,5","3x5 @8","2x5 @7","1x5 @7"]},
+    {name:"Press hombro mancuernas",details:"",rest:"90seg",weeks:["3x9-12 @7","3x9-12 @7,5","3x9-12 @8","3x9-12 @8,5","2x6 @7","2x7-9 @7","2x7-9 @7,5","2x7-9 @8","1x7-9 @7","1x7-9 @7"]},
+    {name:"Pec Fly inclinado",details:"",rest:"60seg",weeks:["2x9-12 @7-8","2x9-12 @8-9","2x9-12 @8-9","2x9-12 @8-9","2x9-12 @7","2x7-9 @7-8","2x7-9 @7-8","2x7-9 @7-8","1x7-9 @7","1x7-9 @7"]},
+    {name:"Elevación frontal unilateral cable",details:"",rest:"60seg",weeks:["3x12-15 @7-8","3x12-15 @8","3x12-15 @8-9","3x12-15 @8-9","3x7-9 @8","2x9-12 @7-8","2x9-12 @7-8","2x9-12 @7-8","1x9-12 @7","1x9-12 @7"]},
+    {name:"Tríceps tras nuca cable unilateral",details:"",rest:"60-90seg",weeks:["3x9-12 @7-9","3x9-12 @7-9","3x9-12 @7-9","3x9-12 @7-9","3x9-12 @8","2x6-9 @7-9","2x6-9 @7-9","2x6-9 @7-9","1x6-9 @7","1x6-9 @7"]},
+  ],
+  4:[
+    {name:"Pull Ups",details:"Agarre prono",rest:"2min",weeks:["3x8 @7","3x8 @7,5","3x7 @8","3x7 @8,5","3x6 @7","3x6 @7","3x6 @7,5","3x5 @8","2x5 @7","2x5 @7"]},
+    {name:"Remo horizontal Unilateral máquina",details:"Agarre neutro",rest:"90seg",weeks:["3x8 @7","3x8 @7,5","3x8 @7,5-8","3x8 @8","3x6 @7","2x6 @7","2x6 @7,5","2x5 @8","2x5 @7","2x5 @7"]},
+    {name:"Cross Pull Back",details:"",rest:"90seg",weeks:["3x9-12 @7","3x9-12 @8","3x9-12 @8,5","3x8-10 @8-9","2x8-10 @7","2x7-9 @7","2x7-9 @7,5","2x7-9 @7,5","1x7-9 @7,5","1x7-9 @7,5"]},
+    {name:"Deltoides posterior",details:"",rest:"60-90seg",weeks:["3x9-12 @7","3x9-12 @7-8","3x9-12 @7-8","3x9-12 @7-8","3x9-12 @7-8","3x7-10 @7-8","3x7-10 @7-8","2x7-10 @7-8","1x7-10 @7-8","1x7-10 @7-8"]},
+    {name:"Flexión hombro unilateral",details:"",rest:"60seg",weeks:["3x9-12 @7","3x12-15 @8","3x12-15 @8-9","3x12-15 @8-9","3x12-15 @8","3x7-10 @7-8","3x7-10 @7-8","2x7-10 @7-8","1x7-10 @7-8","1x7-10 @7-8"]},
+    {name:"Curl martillo",details:"",rest:"60-90seg",weeks:["3x9-12 @7-8","3x9-12 @8","3x9-12 @8-9","3x9-12 @8-9","3x10-12 @8","3x7-10 @7-8","3x7-10 @7-8","2x7-10 @7-8","1x7-10 @7","1x7-10 @7"]},
+    {name:"Curl máquina unilateral",details:"",rest:"60-90seg",weeks:["3x9-12 @7-8","3x9-12 @8","3x9-12 @8-9","3x9-12 @8-9","3x8-12 @8","3x7-10 @7-8","3x7-10 @7-8","2x7-10 @7-8","1x7-10 @7","1x7-10 @7"]},
+  ],
+  5:[
+    {name:"Peso Muerto",details:"",rest:"2-3min",weeks:["3x5 74%","4x5 77%","4x4 79%","5x4 81%","3x3 79%","1x2 @7 / 4x3 @82%","1x1 @8 / 5x2 84%","1x1 @8,5 / 4x2 86%","5x1 75%","1x1 @9,5"]},
+    {name:"Back extension",details:"",rest:"90-120seg",weeks:["3x9-12 @7","3x9-12 @7","3x9-12 @7","3x9-12 @7","3x9-12 @7","3x7-9 @7,5","3x7-9 @7,5","2x7-9 @7,5","2x7-9 @7,5","1x7-9 @7"]},
+    {name:"Single Leg RDL",details:"",rest:"90-120seg",weeks:["3x8 @7","3x8 @7,5","3x8 @7,5-8","3x8 @8","3x8 @7","2x6 @7","2x6 @7","2x5 @7","1x5 @7","1x5 @7"]},
+    {name:"Aducción cadera",details:"",rest:"90-120seg",weeks:["4x9-12 @7-8","4x9-12 @7-9","4x9-12 @7-9","4x9-12 @7-9","3x9-12 @7-9","3x7-9 @7","2x7-9 @7","2x7-9 @7","2x7-9 @7","2x7-9 @7"]},
+    {name:"Leg Curl",details:"",rest:"60-90seg",weeks:["3x9-12 @7-8","4x9-12 @7-9","4x9-12 @7-9","4x9-12 @7-9","3x9-12 @7-9","3x7-9 @7","2x7-9 @7","2x7-9 @7","1x7-9 @7","1x7-9 @7"]},
+    {name:"Weighted Sit ups",details:"",rest:"60-90seg",weeks:["3x7-9 @7","3x7-9 @7-8","3x7-9 @7-8","3x7-9 @7-8","3x7-9 @7-8","2x7-9 @7","2x7-9 @7","2x7-9 @7","1x7-9 @7","1x7-9 @7"]},
+  ],
+};
+
+// ── State ──────────────────────────────────────────────────────────────────
+let state = {
+  view: "workout",
+  activeDay: 1,
+  activeWeek: 1,
+  expanded: null,
+  planData: JSON.parse(JSON.stringify(DEFAULT_DATA)),
+  mesoList: ["1"],
+  mesoMeta: {},
+  currentMeso: "1",
+  store: JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"),
+  xlsxMeta: null,
+  importMsg: "",
+  progEx: 0,
+  chart: null,
+};
+
+function saveStore() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.store));
+  // Sync changed keys to cloud in background
+  if (syncEnabled) {
+    const pairs = Object.entries(state.store).filter(([k]) =>
+      k.startsWith("kg-") || k.startsWith("note-") || k.startsWith("done-") || k.startsWith("dayname-")
+    );
+    cloudSetMany(pairs);
+  }
+}
+
+async function loadFromCloud() {
+  syncStatus = "syncing"; // Auto-load from cloud on start
+if (syncEnabled) {
+  // Show local data immediately if available
+  const localRaw = localStorage.getItem(STORAGE_KEY);
+  if (localRaw) {
+    try {
+      const local = JSON.parse(localRaw);
+      state.store = local;
+      if (local["_mesoList"]) {
+        state.mesoList = JSON.parse(local["_mesoList"]);
+        state.currentMeso = state.mesoList[state.mesoList.length - 1];
+      }
+      if (local["_mesoMeta"]) {
+        state.mesoMeta = JSON.parse(local["_mesoMeta"]);
+        const meta = state.mesoMeta[state.currentMeso];
+        if (meta && meta.planData) state.planData = meta.planData;
+      }
+    } catch {}
+    render(); // Show local data right away
+  } else {
+    // No local data — show loading screen
+    document.getElementById("app").innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:12px;color:#888;font-family:-apple-system,sans-serif">
+        <div style="font-size:28px">↻</div>
+        <div style="font-size:14px">Cargando datos...</div>
+      </div>`;
+  }
+  // Then sync with cloud in background
+  loadFromCloud();
+} else {
+  render();
+}
+  const data = await cloudGet();
+  if (data) {
+    // Merge cloud into local (cloud wins)
+    state.store = { ...state.store, ...data };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.store));
+    syncStatus = "ok";
+  } else {
+    syncStatus = syncEnabled ? "error" : "idle";
+  }
+  render();
+}
+function upd(key, val) { state.store[key] = val; saveStore(); render(); }
+
+// ── Day name helpers ───────────────────────────────────────────────────────
+function getDayName(dayId) {
+  const custom = state.store[`dayname-${state.currentMeso}-${dayId}`];
+  if (custom) return custom;
+  // Try to get from imported meso planData
+  const meta = state.mesoMeta[state.currentMeso];
+  if (meta && meta.dayNames && meta.dayNames[dayId]) return meta.dayNames[dayId];
+  return DEFAULT_DAYS[dayId-1]?.name || "";
+}
+function setDayName(dayId, val) {
+  state.store[`dayname-${state.currentMeso}-${dayId}`] = val;
+  saveStore(); render();
+}
+
+// ── Parse xlsx ─────────────────────────────────────────────────────────────
+async function handleImport(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+
+    // Reset meso state
+    state.mesoList = [];
+    state.mesoMeta = {}; // mesoId -> { sheetName, rows, dayBlocks, planData }
+
+    wb.SheetNames.forEach((sheetName, si) => {
+      const mesoId = String(si + 1);
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+      const dayBlocks = parseDayBlocks(rows);
+      if (!dayBlocks.length) return;
+
+      state.mesoList.push(mesoId);
+
+      // Build planData for this meso
+      const planData = {};
+      const dayNames = {};
+      dayBlocks.forEach((block, dIdx) => {
+        const dayId = dIdx + 1;
+        // Extract day type name from block (e.g. "Pierna anterior")
+        dayNames[dayId] = block.typeName || block.label || "";
+        planData[dayId] = block.exercises.map((ex, exIdx) => {
+          const weeks = Array.from({length:10}, (_,wIdx) => {
+            const wc = ex.weekCols.find(c => c.weekNum === wIdx+1);
+            return wc ? String(rows[ex.rowIdx][wc.presCol]||"").trim()||"-" : "-";
+          });
+
+          // Read existing loads from the sheet into store
+          ex.weekCols.forEach(wc => {
+            const raw = rows[ex.rowIdx][wc.loadCol];
+            const val = raw !== "" && raw !== undefined && raw !== null ? String(raw).trim() : "";
+            if (val && val !== "0") {
+              const k = mesoId === "1"
+                ? `kg-${dayId}-${wc.weekNum}-${exIdx}`
+                : `kg-${dayId}-${wc.weekNum}-${exIdx}-meso${mesoId}`;
+              state.store[k] = val;
+            }
+          });
+
+          return { name: ex.name, details: ex.details, rest: ex.rest, weeks };
+        });
+      });
+
+      state.mesoMeta[mesoId] = { sheetName, rows, dayBlocks, planData, dayNames, wb };
+    });
+
+    if (!state.mesoList.length) {
+      state.importMsg = "err:No se encontraron mesociclos válidos en el archivo.";
+      render(); return;
+    }
+
+    saveStore();
+
+    // Save structure to cloud (without wb object which can't be serialized)
+    const mesoMetaSerializable = {};
+    state.mesoList.forEach(mid => {
+      const m = state.mesoMeta[mid];
+      if (m) mesoMetaSerializable[mid] = { sheetName: m.sheetName, planData: m.planData, dayNames: m.dayNames };
+    });
+    const structPairs = [
+      ["_mesoList", JSON.stringify(state.mesoList)],
+      ["_mesoMeta", JSON.stringify(mesoMetaSerializable)],
+    ];
+    await cloudSetMany(structPairs);
+    state.store["_mesoList"] = JSON.stringify(state.mesoList);
+    state.store["_mesoMeta"] = JSON.stringify(mesoMetaSerializable);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.store));
+
+    // Set current meso to last sheet
+    state.currentMeso = state.mesoList[state.mesoList.length - 1];
+    state.planData = state.mesoMeta[state.currentMeso].planData;
+    state.xlsxMeta = { wb, fileName: file.name };
+    state.activeWeek = 1;
+    state.importMsg = `ok:✓ ${file.name} — ${state.mesoList.length} mesociclos cargados. Actual: Mesociclo ${state.currentMeso}`;
+  } catch(e) {
+    state.importMsg = "err:Error al leer: " + e.message;
+  }
+  render();
+}
+
+function parseDayBlocks(rows) {
+  const days = []; let cur = null; let hRow = -1;
+
+  for (let r = 0; r < rows.length; r++) {
+    // "Día" puede estar en col 0 o col 1
+    let dayCol = -1;
+    for (let c = 0; c <= 2; c++) {
+      if (String(rows[r][c]||"").trim().startsWith("Día")) { dayCol = c; break; }
+    }
+
+    if (dayCol >= 0) {
+      if (cur) days.push(cur);
+      // typeName: col after dayCol (e.g. "Pierna anterior")
+      const typeName = String(rows[r][dayCol+1]||"").trim();
+      cur = { label: String(rows[r][dayCol]||"").trim(), typeName, dayCol, exercises: [], headerRow: r+1 };
+      hRow = r + 1;
+      continue;
+    }
+
+    if (!cur || r <= hRow) continue;
+
+    // Nombre del ejercicio: buscar en col dayCol o dayCol+1
+    const dc = cur.dayCol;
+    const name = String(rows[r][dc]||"").trim() || String(rows[r][dc+1]||"").trim();
+    if (!name || name.toLowerCase().startsWith("día")) continue;
+
+    // Detectar columnas s1..s10 en la fila de header
+    const hdr = rows[hRow] || [];
+    const weekCols = [];
+    for (let c = 0; c < hdr.length; c++) {
+      const h = String(hdr[c]||"").trim().toLowerCase();
+      if (/^s\d+$/.test(h)) {
+        const wNum = parseInt(h.replace("s",""));
+        // loadCol: buscar "Carga sN" en siguiente columna(s)
+        let loadCol = c + 1;
+        for (let lc = c+1; lc < Math.min(c+3, hdr.length); lc++) {
+          if (String(hdr[lc]||"").toLowerCase().includes("carga")) { loadCol = lc; break; }
+        }
+        weekCols.push({ presCol: c, loadCol, weekNum: wNum });
+      }
+    }
+
+    // Detalles y descanso: columnas dc+1 y dc+2 (o dc+2 y dc+3)
+    const details = String(rows[r][dc+1]||"").trim();
+    const rest    = String(rows[r][dc+2]||"").trim();
+
+    cur.exercises.push({ name, details, rest, rowIdx: r, weekCols });
+  }
+
+  if (cur) days.push(cur);
+  return days;
+}
+
+async function handleExport() {
+  if (!state.xlsxMeta) { state.importMsg = "err:Primero importa el archivo."; render(); return; }
+  const meso = state.currentMeso;
+  const meta = state.mesoMeta[meso];
+  if (!meta) { state.importMsg = "err:No hay datos para este mesociclo."; render(); return; }
+  const { wb, rows, dayBlocks, sheetName } = meta;
+  const ws = wb.Sheets[sheetName];
+  dayBlocks.forEach((block, dIdx) => {
+    const dayId = dIdx + 1;
+    block.exercises.forEach((ex, exIdx) => {
+      ex.weekCols.forEach(wc => {
+        const k = meso==="1" ? `kg-${dayId}-${wc.weekNum}-${exIdx}` : `kg-${dayId}-${wc.weekNum}-${exIdx}-meso${meso}`;
+        const val = state.store[k];
+        if (val !== "" && val !== undefined) {
+          const addr = XLSX.utils.encode_cell({ r: ex.rowIdx, c: wc.loadCol });
+          ws[addr] = { v: parseFloat(val)||val, t: isNaN(parseFloat(val))?"s":"n" };
+        }
+      });
+    });
+  });
+  const out = state.xlsxMeta.fileName.replace(/\.xlsx?/i, "_cargas.xlsx");
+  XLSX.writeFile(wb, out);
+  state.importMsg = `ok:Exportado como "${out}"`;
+  render();
+}
+
+// ── kg key helper ──────────────────────────────────────────────────────────
+function kgKey(dayId, weekId, exIdx) {
+  const m = state.currentMeso;
+  return m === "1" ? `kg-${dayId}-${weekId}-${exIdx}` : `kg-${dayId}-${weekId}-${exIdx}-meso${m}`;
+}
+function noteKey(dayId, weekId, exIdx) { return `note-${dayId}-${weekId}-${exIdx}-meso${state.currentMeso}`; }
+function doneKey(dayId, weekId) { return `done-${dayId}-${weekId}-meso${state.currentMeso}`; }
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function render() {
+  const { view, activeDay, activeWeek, expanded, planData, store } = state;
+  const wk = DEFAULT_WEEKS[activeWeek-1];
+  const pc = PHASE_COLORS[wk.phase];
+  const exercises = planData[activeDay] || [];
+  const isDone = !!store[doneKey(activeDay, activeWeek)];
+
+  const html = `
+    <div class="header">
+      <div>
+        <span class="header-title">Training Planner</span>
+        <span class="header-sub">Felipe Pacheco</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${syncEnabled ? `
+          <button onclick="loadFromCloud()" title="Sincronizar" style="border:none;background:transparent;cursor:pointer;font-size:16px;padding:2px 4px;color:${syncStatus==='ok'?'#1D9E75':syncStatus==='error'?'#e24b4a':syncStatus==='syncing'?'#BA7517':'#888'}">
+            ${syncStatus==='syncing'?'↻':syncStatus==='ok'?'✓':syncStatus==='error'?'✕':'↻'}
+          </button>
+        ` : ''}
+        ${state.mesoList.length > 1 ? `
+          <select onchange="setMeso(this.value)" style="padding:4px 8px;border-radius:8px;border:0.5px solid #ccc;background:#f5f5f3;font-size:12px;color:#1a1a1a">
+            ${state.mesoList.map((mid,i) => {
+              const isLast = i === state.mesoList.length - 1;
+              const label = `Meso ${mid}${isLast ? " ★" : ""}`;
+              return `<option value="${mid}" ${mid===state.currentMeso?"selected":""}>${label}</option>`;
+            }).join("")}
+          </select>
+        ` : `<span style="font-size:11px;color:#888">Meso ${state.currentMeso}</span>`}
+        <div class="view-toggle">
+          <button class="view-btn ${view==='workout'?'active':''}" onclick="setView('workout')">Entreno</button>
+          <button class="view-btn ${view==='progress'?'active':''}" onclick="setView('progress')">Progreso</button>
+          <button class="view-btn ${view==='sync'?'active':''}" onclick="setView('sync')">Sync</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="day-nav">
+      ${WEEKDAYS.map((wd,i)=>{
+        const d = DEFAULT_DAYS[i];
+        const name = getDayName(d.id);
+        const act = d.id===activeDay;
+        return `
+          <button class="day-btn ${act?'active':''}"
+            style="${act?`border-color:${pc};background:${pc}`:'color:#888'}"
+            onclick="setDay(${d.id})">
+            ${wd}<span style="opacity:0.75;font-size:10px;display:block;line-height:1.2">${name}</span>
+          </button>`;
+      }).join("")}
+    </div>
+
+    ${view==="workout" ? `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:0.5px solid #e0dfd8;background:#f9f9f7">
+      <span style="font-size:11px;color:#888;white-space:nowrap">${WEEKDAYS[activeDay-1]} —</span>
+      <input type="text" value="${getDayName(activeDay).replace(/"/g,'&quot;')}"
+        onchange="setDayName(${activeDay},this.value)"
+        style="flex:1;padding:4px 8px;font-size:12px;border-radius:6px;border:0.5px solid #ccc;background:#fff;color:#1a1a1a"
+        placeholder="Nombre del entrenamiento...">
+    </div>` : ""}
+
+    <div class="week-nav">
+      ${DEFAULT_WEEKS.map(w=>{
+        const wpc = PHASE_COLORS[w.phase];
+        const done = !!store[`done-${activeDay}-${w.id}-meso${state.currentMeso}`] || (state.currentMeso==="1" && !!store[`done-${activeDay}-${w.id}`]);
+        const act = w.id===activeWeek;
+        return `<button class="week-btn" title="${w.phase}"
+          style="border-color:${act?wpc:'#e0dfd8'};background:${act?wpc:done?wpc+'25':'transparent'};color:${act?'#fff':done?wpc:'#888'};font-weight:${act?500:400}"
+          onclick="setWeek(${w.id})">${w.label}</button>`;
+      }).join("")}
+      <span class="phase-badge" style="background:${pc}22;color:${pc}">${wk.phase}</span>
+    </div>
+
+    ${view==="workout" ? renderWorkout(exercises, activeDay, activeWeek, expanded, store, pc, isDone) : ""}
+    ${view==="progress" ? renderProgress(activeDay, exercises, store) : ""}
+    ${view==="sync" ? renderSync() : ""}
+  `;
+
+  document.getElementById("app").innerHTML = html;
+  if (view==="progress") initChart(activeDay, exercises, store);
+}
+
+function renderWorkout(exercises, dayId, weekId, expanded, store, pc, isDone) {
+  const colW = ["38%","16%","12%","20%","14%"];
+  const cols = ["Ejercicio","Detalles","Desc.","Prescripción","kg"];
+  return `
+    <div class="table-header">
+      ${cols.map((c,i)=>`<span class="th" style="width:${colW[i]}">${c}</span>`).join("")}
+    </div>
+    ${exercises.map((ex,i)=>{
+      const pres = ex.weeks[weekId-1];
+      const skip = !pres || pres==="-";
+      const kg = store[kgKey(dayId,weekId,i)]||"";
+      const note = store[noteKey(dayId,weekId,i)]||"";
+      const isExp = expanded===i;
+      return `
+        <div class="ex-row">
+          <div class="ex-main ${skip?'skip':''} ${isExp?'expanded':''}" onclick="${skip?'':'toggleEx('+i+')'}">
+            <span style="width:${colW[0]};font-size:13px">${ex.name}</span>
+            <span style="width:${colW[1]};font-size:11px;color:#888">${ex.details||"—"}</span>
+            <span style="width:${colW[2]};font-size:11px;color:#888">${ex.rest||"—"}</span>
+            <span style="width:${colW[3]};font-size:13px;font-weight:500;color:${skip?'#888':pc}">${skip?"—":pres}</span>
+            <span style="width:${colW[4]};font-size:12px">${kg?`<span style="color:${pc};font-weight:500">${kg} kg</span>`:`<span style="color:#ccc">—</span>`}</span>
+          </div>
+          ${isExp&&!skip?`
+            <div class="ex-expand">
+              <div>
+                <label>Carga (kg)</label>
+                <input type="number" placeholder="0" value="${kg}" style="width:80px" oninput="updKg(${dayId},${weekId},${i},this.value)">
+              </div>
+              <div style="flex:1">
+                <label>Observaciones</label>
+                <input type="text" placeholder="Notas..." value="${note.replace(/"/g,'&quot;')}" style="width:100%" oninput="updNote(${dayId},${weekId},${i},this.value)">
+              </div>
+            </div>
+          `:""}
+        </div>
+      `;
+    }).join("")}
+    <div style="padding:1rem 16px 0">
+      <button class="done-btn" style="background:${isDone?'#1D9E75':pc}" onclick="toggleDone(${dayId},${weekId})">
+        ${isDone?"✓ Completada":"Marcar sesión completada"}
+      </button>
+    </div>
+  `;
+}
+
+function renderProgress(dayId, exercises, store) {
+  const sel = state.progEx;
+  // Build per-meso datasets
+  const datasets = state.mesoList.map((mid, mi) => {
+    const data = DEFAULT_WEEKS.map(w => {
+      const k = mid==="1" ? `kg-${dayId}-${w.id}-${sel}` : `kg-${dayId}-${w.id}-${sel}-meso${mid}`;
+      return parseFloat(store[k])||null;
+    });
+    return { label:`Mesociclo ${mi+1}`, data, color: MESO_COLORS[mi%6] };
+  });
+
+  const allVals = datasets.flatMap(d=>d.data).filter(v=>v!==null);
+  const hasData = allVals.length>0;
+  const globalMax = hasData ? Math.max(...allVals) : 0;
+  const lastMeso = datasets[datasets.length-1].data.filter(v=>v!==null);
+  const firstMeso = datasets[0].data.filter(v=>v!==null);
+  const lastMax = lastMeso.length ? Math.max(...lastMeso) : 0;
+  const firstMax = firstMeso.length ? Math.max(...firstMeso) : 0;
+  const pct = firstMax ? Math.round(((lastMax-firstMax)/firstMax)*100) : 0;
+  const lastKg = lastMeso.length ? lastMeso[lastMeso.length-1] : 0;
+
+  return `<div style="padding:1rem">
+    <select style="width:100%;padding:6px 10px;border-radius:8px;border:0.5px solid #ccc;background:#f5f5f3;font-size:13px;margin-bottom:1rem" onchange="setProgEx(this.value)">
+      ${exercises.map((ex,i)=>`<option value="${i}" ${i===sel?"selected":""}>${ex.name}</option>`).join("")}
+    </select>
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">Máximo histórico</div><div class="metric-val">${globalMax||"—"} ${globalMax?"kg":""}</div></div>
+      <div class="metric-card"><div class="metric-label">Progreso total</div><div class="metric-val" style="color:${pct>=0?'#1D9E75':'#e24b4a'}">${hasData?(pct>=0?"+":"")+pct+"%":"—"}</div></div>
+      <div class="metric-card"><div class="metric-label">Última carga</div><div class="metric-val">${lastKg||"—"} ${lastKg?"kg":""}</div></div>
+    </div>
+    ${!hasData ? `<p class="empty">Sin cargas registradas aún.</p>` : `
+      <div class="card">
+        <div class="card-header">
+          <span>Progreso por mesociclo</span>
+          <div class="legend">
+            ${datasets.map(ds=>`
+              <span class="legend-item">
+                <span class="legend-line" style="background:${ds.color}"></span>
+                <span class="legend-dot" style="background:${ds.color}"></span>
+                ${ds.label}
+              </span>`).join("")}
+          </div>
+        </div>
+        <div style="padding:12px 16px;position:relative;height:220px">
+          <canvas id="progChart" role="img" aria-label="Progreso de carga por mesociclo"></canvas>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span>Máximo por mesociclo</span></div>
+        ${datasets.map((ds,mi)=>{
+          const vals = ds.data.filter(v=>v!==null);
+          if (!vals.length) return "";
+          const mx = Math.max(...vals);
+          const prev = mi>0 ? Math.max(...(datasets[mi-1].data.filter(v=>v!==null)||[0])) : null;
+          const diff = prev!==null ? (mx-prev).toFixed(1) : null;
+          return `<div class="hist-row">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="legend-dot" style="background:${ds.color}"></span>
+              <span>${ds.label}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              ${diff!==null?`<span style="font-size:11px;color:${parseFloat(diff)>=0?'#1D9E75':'#e24b4a'}">${parseFloat(diff)>=0?"+":""}${diff} kg</span>`:""}
+              <span style="font-weight:500">${mx} kg</span>
+            </div>
+          </div>`;
+        }).join("")}
+      </div>
+    `}
+  </div>`;
+}
+
+function renderSync() {
+  const msg = state.importMsg;
+  const isOk = msg.startsWith("ok:");
+  const isErr = msg.startsWith("err:");
+  const msgText = msg.replace(/^(ok|err):/,"");
+  return `<div style="padding:1.25rem 16px">
+    <div class="sync-card">
+      <h3>1. Importar planilla del entrenador</h3>
+      <p>Sube el .xlsx que te envía cada domingo. La app actualiza los ejercicios y crea un nuevo mesociclo automáticamente.</p>
+      <button class="btn-upload" onclick="document.getElementById('fileIn').click()">Subir archivo .xlsx</button>
+      <input type="file" id="fileIn" accept=".xlsx,.xls" style="display:none" onchange="onFile(this)">
+    </div>
+    <div class="sync-card">
+      <h3>2. Exportar cargas al entrenador</h3>
+      <p>Genera el mismo .xlsx con tus cargas ejecutadas en las columnas correspondientes, listo para enviar.</p>
+      <button class="btn-export" style="background:${state.xlsxMeta?PHASE_COLORS['Acumulación']:'#ccc'};cursor:${state.xlsxMeta?'pointer':'not-allowed'}" onclick="handleExport()">
+        Descargar .xlsx con cargas
+      </button>
+    </div>
+    ${msg?`<div class="msg ${isOk?'ok':isErr?'err':''}">${msgText}</div>`:""}
+    <div class="flow-note">
+      <strong style="color:#1a1a1a">Flujo semanal:</strong><br>
+      Lunes–Viernes: registra cargas en Entreno →<br>
+      Domingo: exporta .xlsx → envíalo al entrenador →<br>
+      Cuando recibes la nueva planilla: impórtala aquí.
+    </div>
+  </div>`;
+}
+
+function initChart(dayId, exercises, store) {
+  const canvas = document.getElementById("progChart");
+  if (!canvas) return;
+  if (state.chart) { state.chart.destroy(); state.chart = null; }
+  const sel = state.progEx;
+  const datasets = state.mesoList.map((mid,mi)=>{
+    const data = DEFAULT_WEEKS.map(w=>{
+      const k = mid==="1"?`kg-${dayId}-${w.id}-${sel}`:`kg-${dayId}-${w.id}-${sel}-meso${mid}`;
+      return parseFloat(store[k])||null;
+    });
+    return {
+      label:`Mesociclo ${mi+1}`, data,
+      borderColor: MESO_COLORS[mi%6], backgroundColor: MESO_COLORS[mi%6],
+      pointBackgroundColor: data.map(v=>v!==null?MESO_COLORS[mi%6]:"transparent"),
+      pointBorderColor: data.map(v=>v!==null?MESO_COLORS[mi%6]:"transparent"),
+      pointRadius: data.map(v=>v!==null?6:0), pointHoverRadius:9,
+      borderWidth:2, borderDash: MESO_DASHES[mi%6], spanGaps:false, tension:0.3,
+    };
+  });
+  state.chart = new Chart(canvas, {
+    type:"line",
+    data:{ labels: DEFAULT_WEEKS.map(w=>w.label), datasets },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{ filter:i=>i.raw!==null, callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.raw} kg`} } },
+      scales:{
+        x:{ grid:{display:false}, ticks:{color:"#888",font:{size:11},autoSkip:false} },
+        y:{ grid:{color:"rgba(0,0,0,0.05)"}, ticks:{color:"#888",font:{size:11},callback:v=>v+" kg"}, beginAtZero:false }
+      }
+    }
+  });
+}
+
+// ── Event handlers ─────────────────────────────────────────────────────────
+function setView(v) { state.view=v; state.importMsg=""; render(); }
+function setDay(d) { state.activeDay=d; state.expanded=null; render(); }
+function setWeek(w) { state.activeWeek=w; state.expanded=null; render(); }
+function setMeso(mid) {
+  state.currentMeso = mid;
+  const meta = state.mesoMeta[mid];
+  if (meta && meta.planData) state.planData = meta.planData;
+  state.expanded = null;
+  render();
+}
+function toggleEx(i) { state.expanded = state.expanded===i ? null : i; render(); }
+function updKg(d,w,i,v) { state.store[kgKey(d,w,i)]=v; saveStore(); }
+function updNote(d,w,i,v) { state.store[noteKey(d,w,i)]=v; saveStore(); }
+function toggleDone(d,w) { const k=doneKey(d,w); state.store[k]=!state.store[k]; saveStore(); render(); }
+function setProgEx(v) { state.progEx=+v; if(state.chart){state.chart.destroy();state.chart=null;} render(); }
+function onFile(input) { if(input.files[0]) handleImport(input.files[0]); }
+
+render();
+</script>
+</body>
+</html>
