@@ -81,52 +81,51 @@
 <div class="app" id="app"></div>
 
 <script>
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwOD4Oy-EXfeXVi9pX8QS2K3FRIkhGTA5UK6Vf1wleZPbyFZC3-Il7MgZdDem8fZGEUpg/exec";
-const STORAGE_KEY = "tp_v3";
-let syncEnabled = !!SCRIPT_URL && !SCRIPT_URL.includes("TU_URL");
-let syncStatus = "idle"; // idle | syncing | ok | error
+const JSONBIN_KEY = "$2a$10$ZeyseJKssAbjbcLqKGyfBOzggkN/6MbpZwafsvWQc2avsv2nr/mwy";
+const JSONBIN_URL = "https://api.jsonbin.io/v3/b";
+let JSONBIN_BIN_ID = localStorage.getItem("tp_bin_id") || "";
 
 async function cloudGet() {
-  if (!syncEnabled) return null;
+  if (!JSONBIN_BIN_ID) return null;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const url = `${SCRIPT_URL}?action=get&t=${Date.now()}`;
-    const r = await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-      redirect: "follow",
+    const r = await fetch(`${JSONBIN_URL}/${JSONBIN_BIN_ID}/latest`, {
+      headers: { "X-Master-Key": JSONBIN_KEY }
     });
-    clearTimeout(timeout);
-    const text = await r.text();
-    const j = JSON.parse(text);
-    return j.ok ? j.data : null;
+    const j = await r.json();
+    return j.record || null;
   } catch(e) { console.log("cloudGet error:", e); return null; }
 }
 
 async function cloudSetMany(pairs) {
-  if (!syncEnabled) return;
   try {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 12000);
-    const url = `${SCRIPT_URL}?action=setMany&pairs=${encodeURIComponent(JSON.stringify(pairs))}&t=${Date.now()}`;
-    await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-      redirect: "follow",
-    });
+    const current = await cloudGet() || {};
+    pairs.forEach(([k,v]) => current[k] = v);
+    if (!JSONBIN_BIN_ID) {
+      // Create new bin
+      const r = await fetch(JSONBIN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY, "X-Bin-Name": "TrainingPlanner" },
+        body: JSON.stringify(current)
+      });
+      const j = await r.json();
+      JSONBIN_BIN_ID = j.metadata?.id || "";
+      localStorage.setItem("tp_bin_id", JSONBIN_BIN_ID);
+    } else {
+      await fetch(`${JSONBIN_URL}/${JSONBIN_BIN_ID}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
+        body: JSON.stringify(current)
+      });
+    }
   } catch(e) { console.log("cloudSetMany error:", e); }
 }
 
 async function cloudSet(key, value) {
-  if (!syncEnabled) return;
-  try {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 8000);
-    const url = `${SCRIPT_URL}?action=set&key=${encodeURIComponent(key)}&value=${encodeURIComponent(value)}&t=${Date.now()}`;
-    await fetch(url, { method: "GET", signal: controller.signal, redirect: "follow" });
-  } catch(e) { console.log("cloudSet error:", e); }
+  await cloudSetMany([[key, value]]);
 }
+
+const syncEnabled = !!JSONBIN_KEY;
+let syncStatus = "idle";
 const PHASE_COLORS = { "Acumulación":"#378ADD","Descarga":"#1D9E75","Intensificación":"#BA7517","Taper":"#D4537E","Max Week":"#D85A30" };
 const MESO_COLORS = ["#378ADD","#1D9E75","#BA7517","#D4537E","#D85A30","#534AB7"];
 const MESO_DASHES = [[4,3],[2,2],[],[5,2],[3,3],[1,2]];
@@ -198,12 +197,11 @@ let state = {
 
 function saveStore() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.store));
-  // Sync changed keys to cloud in background
   if (syncEnabled) {
     const pairs = Object.entries(state.store).filter(([k]) =>
-      k.startsWith("kg-") || k.startsWith("note-") || k.startsWith("done-") || k.startsWith("dayname-")
+      k.startsWith("kg-") || k.startsWith("note-") || k.startsWith("done-") || k.startsWith("dayname-") || k.startsWith("_meso")
     );
-    cloudSetMany(pairs);
+    if (pairs.length) cloudSetMany(pairs);
   }
 }
 
