@@ -99,12 +99,13 @@ const FIRESTORE_URL = `https://firestore.googleapis.com/v1/projects/${FIREBASE_C
 async function cloudGet() {
   try {
     const r = await fetch(FIRESTORE_URL + `?key=${FIREBASE_CONFIG.apiKey}`);
-    if (r.status === 404) return {};
+    if (r.status === 404) return {}; // Document not created yet — return empty
+    if (!r.ok) return null;
     const j = await r.json();
     if (!j.fields) return {};
     const result = {};
     Object.entries(j.fields).forEach(([k, v]) => {
-      result[k] = v.stringValue ?? v.integerValue ?? v.doubleValue ?? "";
+      result[k] = v.stringValue ?? String(v.integerValue ?? v.doubleValue ?? "");
     });
     return result;
   } catch(e) { console.log("cloudGet error:", e); return null; }
@@ -118,11 +119,22 @@ async function cloudSetMany(pairs) {
     Object.entries(current).forEach(([k,v]) => {
       fields[k] = { stringValue: String(v) };
     });
-    await fetch(FIRESTORE_URL + `?key=${FIREBASE_CONFIG.apiKey}`, {
+    // Try PATCH first, if 404 use POST to create
+    const patchUrl = FIRESTORE_URL + `?key=${FIREBASE_CONFIG.apiKey}`;
+    const r = await fetch(patchUrl, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fields })
     });
+    if (r.status === 404) {
+      // Document doesn't exist — create it
+      const postUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/(default)/documents/training?documentId=data&key=${FIREBASE_CONFIG.apiKey}`;
+      await fetch(postUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields })
+      });
+    }
   } catch(e) { console.log("cloudSetMany error:", e); }
 }
 
