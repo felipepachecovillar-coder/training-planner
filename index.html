@@ -84,6 +84,8 @@
 const JSONBIN_KEY = "$2a$10$ZeyseJKssAbjbcLqKGyfBOzggkN/6MbpZwafsvWQc2avsv2nr/mwy";
 const JSONBIN_URL = "https://api.jsonbin.io/v3/b";
 let JSONBIN_BIN_ID = localStorage.getItem("tp_bin_id") || "";
+const syncEnabled = !!JSONBIN_KEY;
+let syncStatus = "idle";
 
 async function cloudGet() {
   if (!JSONBIN_BIN_ID) return null;
@@ -101,7 +103,6 @@ async function cloudSetMany(pairs) {
     const current = await cloudGet() || {};
     pairs.forEach(([k,v]) => current[k] = v);
     if (!JSONBIN_BIN_ID) {
-      // Create new bin
       const r = await fetch(JSONBIN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY, "X-Bin-Name": "TrainingPlanner" },
@@ -123,9 +124,6 @@ async function cloudSetMany(pairs) {
 async function cloudSet(key, value) {
   await cloudSetMany([[key, value]]);
 }
-
-const syncEnabled = !!JSONBIN_KEY;
-let syncStatus = "idle";
 const PHASE_COLORS = { "Acumulación":"#378ADD","Descarga":"#1D9E75","Intensificación":"#BA7517","Taper":"#D4537E","Max Week":"#D85A30" };
 const MESO_COLORS = ["#378ADD","#1D9E75","#BA7517","#D4537E","#D85A30","#534AB7"];
 const MESO_DASHES = [[4,3],[2,2],[],[5,2],[3,3],[1,2]];
