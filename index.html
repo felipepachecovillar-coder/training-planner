@@ -84,27 +84,12 @@
 const STORAGE_KEY = "tp_v3";
 const JSONBIN_KEY = "$2a$10$ZeyseJKssAbjbcLqKGyfBOzggkN/6MbpZwafsvWQc2avsv2nr/mwy";
 const JSONBIN_URL = "https://api.jsonbin.io/v3/b";
-let JSONBIN_BIN_ID = localStorage.getItem("tp_bin_id") || "";
+let JSONBIN_BIN_ID = "6a02343b250b1311c33685cb";
 const syncEnabled = !!JSONBIN_KEY;
 let syncStatus = "idle";
 
 async function cloudGet() {
   try {
-    // If no bin_id locally, search for it by name
-    if (!JSONBIN_BIN_ID) {
-      const r = await fetch(`https://api.jsonbin.io/v3/b?meta=false`, {
-        headers: { "X-Master-Key": JSONBIN_KEY }
-      });
-      const bins = await r.json();
-      if (Array.isArray(bins)) {
-        const found = bins.find(b => b.snippetMeta?.name === "TrainingPlanner");
-        if (found) {
-          JSONBIN_BIN_ID = found.id;
-          localStorage.setItem("tp_bin_id", JSONBIN_BIN_ID);
-        }
-      }
-    }
-    if (!JSONBIN_BIN_ID) return null;
     const r = await fetch(`${JSONBIN_URL}/${JSONBIN_BIN_ID}/latest`, {
       headers: { "X-Master-Key": JSONBIN_KEY }
     });
@@ -117,22 +102,11 @@ async function cloudSetMany(pairs) {
   try {
     const current = await cloudGet() || {};
     pairs.forEach(([k,v]) => current[k] = v);
-    if (!JSONBIN_BIN_ID) {
-      const r = await fetch(JSONBIN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY, "X-Bin-Name": "TrainingPlanner" },
-        body: JSON.stringify(current)
-      });
-      const j = await r.json();
-      JSONBIN_BIN_ID = j.metadata?.id || "";
-      localStorage.setItem("tp_bin_id", JSONBIN_BIN_ID);
-    } else {
-      await fetch(`${JSONBIN_URL}/${JSONBIN_BIN_ID}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
-        body: JSON.stringify(current)
-      });
-    }
+    await fetch(`${JSONBIN_URL}/${JSONBIN_BIN_ID}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
+      body: JSON.stringify(current)
+    });
   } catch(e) { console.log("cloudSetMany error:", e); }
 }
 
