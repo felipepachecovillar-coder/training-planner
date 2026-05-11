@@ -82,19 +82,31 @@
 
 <script>
 const STORAGE_KEY = "tp_v3";
-const JSONBIN_KEY = "$2a$10$ZeyseJKssAbjbcLqKGyfBOzggkN/6MbpZwafsvWQc2avsv2nr/mwy";
-const JSONBIN_URL = "https://api.jsonbin.io/v3/b";
-let JSONBIN_BIN_ID = "6a02343b250b1311c33685cb";
-const syncEnabled = !!JSONBIN_KEY;
+const syncEnabled = true;
 let syncStatus = "idle";
+
+// ── Firebase ───────────────────────────────────────────────────────────────
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBNbsNgAfulHQ8VVEurpaLZgB1nfgrYYoM",
+  authDomain: "training-planner-c5ae4.firebaseapp.com",
+  projectId: "training-planner-c5ae4",
+  storageBucket: "training-planner-c5ae4.firebasestorage.app",
+  messagingSenderId: "999742258977",
+  appId: "1:999742258977:web:3c8eeb9d91c1908e4c8860"
+};
+const FIRESTORE_URL = `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/(default)/documents/training/data`;
 
 async function cloudGet() {
   try {
-    const r = await fetch(`${JSONBIN_URL}/${JSONBIN_BIN_ID}/latest`, {
-      headers: { "X-Master-Key": JSONBIN_KEY }
-    });
+    const r = await fetch(FIRESTORE_URL + `?key=${FIREBASE_CONFIG.apiKey}`);
+    if (r.status === 404) return {};
     const j = await r.json();
-    return j.record || null;
+    if (!j.fields) return {};
+    const result = {};
+    Object.entries(j.fields).forEach(([k, v]) => {
+      result[k] = v.stringValue ?? v.integerValue ?? v.doubleValue ?? "";
+    });
+    return result;
   } catch(e) { console.log("cloudGet error:", e); return null; }
 }
 
@@ -102,10 +114,14 @@ async function cloudSetMany(pairs) {
   try {
     const current = await cloudGet() || {};
     pairs.forEach(([k,v]) => current[k] = v);
-    await fetch(`${JSONBIN_URL}/${JSONBIN_BIN_ID}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
-      body: JSON.stringify(current)
+    const fields = {};
+    Object.entries(current).forEach(([k,v]) => {
+      fields[k] = { stringValue: String(v) };
+    });
+    await fetch(FIRESTORE_URL + `?key=${FIREBASE_CONFIG.apiKey}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fields })
     });
   } catch(e) { console.log("cloudSetMany error:", e); }
 }
