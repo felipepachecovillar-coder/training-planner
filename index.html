@@ -89,8 +89,22 @@ const syncEnabled = !!JSONBIN_KEY;
 let syncStatus = "idle";
 
 async function cloudGet() {
-  if (!JSONBIN_BIN_ID) return null;
   try {
+    // If no bin_id locally, search for it by name
+    if (!JSONBIN_BIN_ID) {
+      const r = await fetch(`https://api.jsonbin.io/v3/b?meta=false`, {
+        headers: { "X-Master-Key": JSONBIN_KEY }
+      });
+      const bins = await r.json();
+      if (Array.isArray(bins)) {
+        const found = bins.find(b => b.snippetMeta?.name === "TrainingPlanner");
+        if (found) {
+          JSONBIN_BIN_ID = found.id;
+          localStorage.setItem("tp_bin_id", JSONBIN_BIN_ID);
+        }
+      }
+    }
+    if (!JSONBIN_BIN_ID) return null;
     const r = await fetch(`${JSONBIN_URL}/${JSONBIN_BIN_ID}/latest`, {
       headers: { "X-Master-Key": JSONBIN_KEY }
     });
