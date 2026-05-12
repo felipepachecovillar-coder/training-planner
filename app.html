@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe</title>
+<title>Training Planner — Felipe v5</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
@@ -34,8 +34,6 @@ button,select,input{font-family:inherit}
 .donebtn{padding:8px 18px;border-radius:8px;border:none;color:#fff;font-weight:500;font-size:13px;cursor:pointer}
 .card{background:#fff;border:.5px solid #e0dfd8;border-radius:12px;overflow:hidden;margin-bottom:.75rem}
 .cardh{padding:10px 14px;border-bottom:.5px solid #e0dfd8;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
-.metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem}
-.metric-card{background:#f5f5f3;border-radius:8px;padding:12px}
 .histrow{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:.5px solid #e0dfd8;font-size:12px}
 .syncard{background:#fff;border:.5px solid #e0dfd8;border-radius:12px;padding:20px;margin-bottom:12px}
 .syncard h3{font-size:14px;font-weight:500;margin-bottom:4px}
@@ -45,50 +43,47 @@ button,select,input{font-family:inherit}
 .msg.err{background:#fcebeb;color:#a32d2d}
 .dname-bar{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:.5px solid #e0dfd8;background:#f9f9f7}
 .dname-bar input{flex:1;padding:4px 8px;font-size:12px;border-radius:6px;border:.5px solid #ccc;background:#fff;color:#1a1a1a}
+.ptabs{display:flex;border-bottom:.5px solid #e0dfd8;margin-bottom:1rem}
+.ptab{flex:1;padding:8px;border:none;background:transparent;font-size:13px;cursor:pointer}
 </style>
 </head>
 <body>
 <div class="app" id="app"></div>
 <script>
-// ── Constants ──────────────────────────────────────────────────────────────
-const SK = "tp_v4";
-const PC = {"Acumulación":"#378ADD","Descarga":"#1D9E75","Intensificación":"#BA7517","Taper":"#D4537E","Max Week":"#D85A30"};
-const MC = ["#378ADD","#1D9E75","#BA7517","#D4537E","#D85A30","#534AB7"];
-const ALL_WEEKS = Array.from({length:10},(_,i)=>({id:i+1,label:`S${i+1}`,phase:i<4?"Acumulación":i===4?"Descarga":i<8?"Intensificación":i===8?"Taper":"Max Week"}));
-let WEEKS = ALL_WEEKS;
-const DAYS = [{id:1,name:"Upper Body"},{id:2,name:"Lower A"},{id:3,name:"Upper Push"},{id:4,name:"Upper Pull"},{id:5,name:"Lower B"}];
-const WDS = ["Lunes","Martes","Miércoles","Jueves","Viernes"];
+const SK="tp_v5";
+const PC={"Acumulación":"#378ADD","Descarga":"#1D9E75","Intensificación":"#BA7517","Taper":"#D4537E","Max Week":"#D85A30"};
+const MC=["#378ADD","#1D9E75","#BA7517","#D4537E","#D85A30","#534AB7"];
+const ALL_WEEKS=Array.from({length:10},(_,i)=>({id:i+1,label:"S"+(i+1),phase:i<4?"Acumulación":i===4?"Descarga":i<8?"Intensificación":i===8?"Taper":"Max Week"}));
+let WEEKS=ALL_WEEKS;
+const DAYS=[{id:1,name:"Upper Body"},{id:2,name:"Lower A"},{id:3,name:"Upper Push"},{id:4,name:"Upper Pull"},{id:5,name:"Lower B"}];
+const WDS=["Lunes","Martes","Miércoles","Jueves","Viernes"];
 
-// ── Firebase ───────────────────────────────────────────────────────────────
-const FB = {apiKey:"AIzaSyBNbsNgAfulHQ8VVEurpaLZgB1nfgrYYoM",projectId:"training-planner-c5ae4"};
-const FS = `https://firestore.googleapis.com/v1/projects/${FB.projectId}/databases/(default)/documents/training`;
+const FB={apiKey:"AIzaSyBNbsNgAfulHQ8VVEurpaLZgB1nfgrYYoM",projectId:"training-planner-c5ae4"};
+const FS="https://firestore.googleapis.com/v1/projects/"+FB.projectId+"/databases/(default)/documents/training";
 
-async function fsGet() {
-  try {
-    const r = await fetch(`${FS}/data?key=${FB.apiKey}`);
-    if (r.status === 404) return {};
-    if (!r.ok) return null;
-    const j = await r.json();
-    if (!j.fields) return {};
-    const out = {};
-    for (const [k,v] of Object.entries(j.fields)) out[k] = v.stringValue ?? String(v.integerValue ?? v.doubleValue ?? "");
+async function fsGet(){
+  try{
+    const r=await fetch(FS+"/data?key="+FB.apiKey);
+    if(r.status===404)return{};
+    if(!r.ok)return null;
+    const j=await r.json();
+    if(!j.fields)return{};
+    const out={};
+    for(const[k,v]of Object.entries(j.fields))out[k]=v.stringValue??String(v.integerValue??v.doubleValue??"");
     return out;
-  } catch { return null; }
+  }catch{return null;}
 }
 
-async function fsPut(data) {
-  const fields = {};
-  for (const [k,v] of Object.entries(data)) fields[k] = {stringValue:String(v)};
-  try {
-    const r = await fetch(`${FS}/data?key=${FB.apiKey}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({fields})});
-    if (r.status === 404) {
-      await fetch(`${FS}?documentId=data&key=${FB.apiKey}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fields})});
-    }
-  } catch {}
+async function fsPut(data){
+  const fields={};
+  for(const[k,v]of Object.entries(data))fields[k]={stringValue:String(v)};
+  try{
+    const r=await fetch(FS+"/data?key="+FB.apiKey,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({fields})});
+    if(r.status===404)await fetch(FS+"?documentId=data&key="+FB.apiKey,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fields})});
+  }catch{}
 }
 
-// ── Default data ───────────────────────────────────────────────────────────
-const DEFAULT = {
+const DEFAULT={
   1:[
     {name:"Press Banca",details:"",rest:"3min",weeks:["3x4 72%","3x4 74%","3x4 76%","3x4 78%","3x6 73%","3x4 80%","3x4 82%","3x3 84%","5x4 81%","1x1 @9,5"]},
     {name:"Spoto Press",details:"",rest:"",weeks:["2x8 @7","3x8 @7,5","3x7 @8","3x7 @8,5","-","3x6 @7","3x5 @7,5","2x5 @8","1x5 @7","-"]},
@@ -133,108 +128,84 @@ const DEFAULT = {
   ],
 };
 
-// ── State ──────────────────────────────────────────────────────────────────
-const S = {
-  view:"workout", day:1, week:1, exp:null,
+const S={
+  view:"workout",day:1,week:1,exp:null,
   plan:JSON.parse(JSON.stringify(DEFAULT)),
-  mesoList:["1"], mesoMeta:{}, meso:"1",
+  mesoList:["1"],mesoMeta:{},meso:"1",
   mesoWeeks:{"1":10},
-  store:{}, xlsxMeta:null, importMsg:"",
-  progEx:0, chart:null, chart2:null, progTab:'meso', chart2:null, progTab:'meso', syncStatus:"idle",
-  syncing:false
+  store:{},xlsxMeta:null,importMsg:"",
+  progEx:0,progTab:"meso",chart:null,chart2:null,
+  syncStatus:"idle",syncing:false
 };
 
-function loadLocal() {
-  try { const r=localStorage.getItem(SK); if(r){S.store=JSON.parse(r);} } catch {}
-}
-function saveLocal() { try{localStorage.setItem(SK,JSON.stringify(S.store));}catch{} }
-
-function saveStore() {
+function loadLocal(){try{const r=localStorage.getItem(SK);if(r)S.store=JSON.parse(r);}catch{}}
+function saveLocal(){try{localStorage.setItem(SK,JSON.stringify(S.store));}catch{}}
+function saveStore(){
   saveLocal();
-  const pairs={};
-  for(const [k,v] of Object.entries(S.store)){
-    if(k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||k.startsWith("dayname-")||k.startsWith("_meso")) pairs[k]=v;
+  const p={};
+  for(const[k,v]of Object.entries(S.store)){
+    if(k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||k.startsWith("dayname-")||k.startsWith("_meso"))p[k]=v;
   }
-  if(Object.keys(pairs).length) fsPut(pairs);
+  if(Object.keys(p).length)fsPut(p);
 }
 
-function applyCloud(data) {
+function applyCloud(data){
   S.store={...S.store,...data};
   saveLocal();
-  if(data["_mesoList"]) try{S.mesoList=JSON.parse(data["_mesoList"]);S.meso=S.mesoList[S.mesoList.length-1];}catch{}
-  if(data["_mesoMeta"]) try{
-    S.mesoMeta=JSON.parse(data["_mesoMeta"]);
-    const m=S.mesoMeta[S.meso];
-    if(m?.planData) S.plan=m.planData;
-  }catch{}
+  if(data["_mesoList"])try{S.mesoList=JSON.parse(data["_mesoList"]);S.meso=S.mesoList[S.mesoList.length-1];}catch{}
+  if(data["_mesoMeta"])try{S.mesoMeta=JSON.parse(data["_mesoMeta"]);const m=S.mesoMeta[S.meso];if(m&&m.planData)S.plan=m.planData;}catch{}
+  if(data["_mesoWeeks"])try{S.mesoWeeks=JSON.parse(data["_mesoWeeks"]);}catch{}
 }
 
-async function syncCloud() {
-  if(S.syncing) return;
-  S.syncing=true;
-  S.syncStatus="syncing";
-  updateSyncIcon();
-  const data=await fsGet();
-  if(data && Object.keys(data).length>0) {
-    applyCloud(data);
-    S.syncStatus="ok";
-  } else if(data!==null) {
-    // cloud empty — push local
-    const pairs={};
-    for(const [k,v] of Object.entries(S.store)) pairs[k]=v;
-    if(Object.keys(pairs).length) await fsPut(pairs);
-    S.syncStatus="ok";
-  } else {
-    S.syncStatus="error";
-  }
-  S.syncing=false;
-  render();
-}
-
-function updateSyncIcon() {
+function updateSyncIcon(){
   const el=document.getElementById("syncIcon");
-  if(!el) return;
+  if(!el)return;
   el.textContent=S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻";
   el.style.color=S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888";
 }
 
-// ── Key helpers ────────────────────────────────────────────────────────────
-function kgKey(d,w,i){return S.meso==="1"?`kg-${d}-${w}-${i}`:`kg-${d}-${w}-${i}-m${S.meso}`;}
-function noteKey(d,w,i){return `note-${d}-${w}-${i}-m${S.meso}`;}
-function doneKey(d,w){return `done-${d}-${w}-m${S.meso}`;}
-function dnameKey(d){return `dayname-${S.meso}-${d}`;}
-
-function getDayName(d){
-  const c=S.store[dnameKey(d)]; if(c) return c;
-  const m=S.mesoMeta[S.meso]; if(m?.dayNames?.[d]) return m.dayNames[d];
-  return DAYS[d-1]?.name||"";
+async function syncCloud(){
+  if(S.syncing)return;
+  S.syncing=true;S.syncStatus="syncing";updateSyncIcon();
+  const data=await fsGet();
+  if(data&&Object.keys(data).length>0){applyCloud(data);S.syncStatus="ok";}
+  else if(data!==null){const p={};for(const[k,v]of Object.entries(S.store))p[k]=v;if(Object.keys(p).length)await fsPut(p);S.syncStatus="ok";}
+  else S.syncStatus="error";
+  S.syncing=false;render();
 }
 
-// ── XLSX parse ─────────────────────────────────────────────────────────────
+function kgKey(d,w,i){return S.meso==="1"?"kg-"+d+"-"+w+"-"+i:"kg-"+d+"-"+w+"-"+i+"-m"+S.meso;}
+function noteKey(d,w,i){return"note-"+d+"-"+w+"-"+i+"-m"+S.meso;}
+function doneKey(d,w){return"done-"+d+"-"+w+"-m"+S.meso;}
+function dnameKey(d){return"dayname-"+S.meso+"-"+d;}
+function getDayName(d){
+  const c=S.store[dnameKey(d)];if(c)return c;
+  const m=S.mesoMeta[S.meso];if(m&&m.dayNames&&m.dayNames[d])return m.dayNames[d];
+  return DAYS[d-1]?DAYS[d-1].name:"";
+}
+
 function parseDayBlocks(rows){
-  const days=[]; let cur=null; let hRow=-1;
-  let detectedWeeks=0;
+  const days=[];let cur=null;let hRow=-1;let detectedWeeks=0;
   for(let r=0;r<rows.length;r++){
     let dc=-1;
     for(let c=0;c<=2;c++){if(String(rows[r][c]||"").trim().startsWith("Día")){dc=c;break;}}
     if(dc>=0){
-      if(cur) days.push(cur);
+      if(cur)days.push(cur);
       cur={label:String(rows[r][dc]||"").trim(),typeName:String(rows[r][dc+1]||"").trim(),dayCol:dc,exercises:[],headerRow:r+1};
       hRow=r+1;
-      // Count weeks from header row
       if(detectedWeeks===0){
         const hdr=rows[hRow]||[];
         for(let c=0;c<hdr.length;c++){
           const h=String(hdr[c]||"").trim().toLowerCase();
-          if(/^s\d+$/.test(h)) detectedWeeks=Math.max(detectedWeeks,parseInt(h.replace("s","")));
+          if(/^s\d+$/.test(h))detectedWeeks=Math.max(detectedWeeks,parseInt(h.replace("s","")));
         }
       }
       continue;
     }
-    if(!cur||r<=hRow) continue;
+    if(!cur||r<=hRow)continue;
     const dc2=cur.dayCol;
     const name=String(rows[r][dc2]||"").trim()||String(rows[r][dc2+1]||"").trim();
-    if(!name||name.toLowerCase().startsWith("día")) continue;
+    if(!name||name.toLowerCase().startsWith("día"))continue;
     const hdr=rows[hRow]||[];
     const weekCols=[];
     for(let c=0;c<hdr.length;c++){
@@ -248,8 +219,8 @@ function parseDayBlocks(rows){
     }
     cur.exercises.push({name,details:String(rows[r][dc2+1]||"").trim(),rest:String(rows[r][dc2+2]||"").trim(),rowIdx:r,weekCols});
   }
-  if(cur) days.push(cur);
-  days.detectedWeeks = detectedWeeks || 10;
+  if(cur)days.push(cur);
+  days.detectedWeeks=detectedWeeks||10;
   return days;
 }
 
@@ -257,17 +228,16 @@ async function handleImport(file){
   try{
     const buf=await file.arrayBuffer();
     const wb=XLSX.read(buf,{type:"array"});
-    S.mesoList=[]; S.mesoMeta={};
+    S.mesoList=[];S.mesoMeta={};S.mesoWeeks={};
     wb.SheetNames.forEach((sn,si)=>{
       const mid=String(si+1);
       const ws=wb.Sheets[sn];
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
       const dayBlocks=parseDayBlocks(rows);
-      if(!dayBlocks.length) return;
-          S.mesoList.push(mid);
-      const maxWeek = dayBlocks.detectedWeeks || 10;
-      S.mesoWeeks[mid] = maxWeek;
-      const planData={}, dayNames={};
+      if(!dayBlocks.length)return;
+      S.mesoList.push(mid);
+      S.mesoWeeks[mid]=dayBlocks.detectedWeeks||10;
+      const planData={},dayNames={};
       dayBlocks.forEach((block,di)=>{
         const dayId=di+1;
         dayNames[dayId]=block.typeName||"";
@@ -280,7 +250,7 @@ async function handleImport(file){
             const raw=rows[ex.rowIdx][wc.loadCol];
             const val=raw!==""&&raw!==undefined&&raw!==null?String(raw).trim():"";
             if(val&&val!=="0"){
-              const k=mid==="1"?`kg-${dayId}-${wc.weekNum}-${ei}`:`kg-${dayId}-${wc.weekNum}-${ei}-m${mid}`;
+              const k=mid==="1"?"kg-"+dayId+"-"+wc.weekNum+"-"+ei:"kg-"+dayId+"-"+wc.weekNum+"-"+ei+"-m"+mid;
               S.store[k]=val;
             }
           });
@@ -293,14 +263,13 @@ async function handleImport(file){
     S.meso=S.mesoList[S.mesoList.length-1];
     S.plan=S.mesoMeta[S.meso].planData;
     S.xlsxMeta={wb,fileName:file.name};
-    // Save structure to cloud
     const mm={};
     S.mesoList.forEach(mid=>{const m=S.mesoMeta[mid];if(m)mm[mid]={sheetName:m.sheetName,planData:m.planData,dayNames:m.dayNames};});
     S.store["_mesoList"]=JSON.stringify(S.mesoList);
     S.store["_mesoMeta"]=JSON.stringify(mm);
     S.store["_mesoWeeks"]=JSON.stringify(S.mesoWeeks);
     saveStore();
-    S.importMsg=`ok:✓ ${file.name} — ${S.mesoList.length} mesociclos`;
+    S.importMsg="ok:✓ "+file.name+" — "+S.mesoList.length+" mesociclos";
   }catch(e){S.importMsg="err:Error: "+e.message;}
   render();
 }
@@ -315,7 +284,7 @@ async function handleExport(){
     const dayId=di+1;
     block.exercises.forEach((ex,ei)=>{
       ex.weekCols.forEach(wc=>{
-        const k=S.meso==="1"?`kg-${dayId}-${wc.weekNum}-${ei}`:`kg-${dayId}-${wc.weekNum}-${ei}-m${S.meso}`;
+        const k=S.meso==="1"?"kg-"+dayId+"-"+wc.weekNum+"-"+ei:"kg-"+dayId+"-"+wc.weekNum+"-"+ei+"-m"+S.meso;
         const val=S.store[k];
         if(val!==undefined&&val!==""){
           const addr=XLSX.utils.encode_cell({r:ex.rowIdx,c:wc.loadCol});
@@ -329,74 +298,75 @@ async function handleExport(){
   render();
 }
 
-// ── Render ─────────────────────────────────────────────────────────────────
-function render(){
-  const numWeeks = S.mesoWeeks[S.meso] || 10;
-  WEEKS = ALL_WEEKS.slice(0, numWeeks);
-  if(S.week > numWeeks) S.week = numWeeks;
+function buildDatasets(){
+  return S.mesoList.map((mid,mi)=>{
+    const nw=S.mesoWeeks[mid]||10;
+    const data=Array.from({length:nw},(_,wi)=>{
+      const k=mid==="1"?"kg-"+S.day+"-"+(wi+1)+"-"+S.progEx:"kg-"+S.day+"-"+(wi+1)+"-"+S.progEx+"-m"+mid;
+      return parseFloat(S.store[k])||null;
+    });
+    return{label:"Meso "+Number(mid),data,color:MC[mi%6],weeks:nw};
+  });
+}
 
+function render(){
+  const nw=S.mesoWeeks[S.meso]||10;
+  WEEKS=ALL_WEEKS.slice(0,nw);
+  if(S.week>nw)S.week=nw;
   const wk=WEEKS[S.week-1];
   const pc=PC[wk.phase];
   const exs=S.plan[S.day]||[];
   const isDone=!!S.store[doneKey(S.day,S.week)];
   const v=S.view;
 
-  let html=`
-  <div class="hdr">
-    <div><span style="font-weight:500;font-size:16px">Training Planner</span><span style="font-size:12px;color:#888;margin-left:8px">Felipe Pacheco</span></div>
-    <div style="display:flex;align-items:center;gap:8px">
-      <button id="syncIcon" onclick="syncCloud()" style="border:none;background:transparent;cursor:pointer;font-size:16px;padding:2px 4px;color:${S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888"}">${S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻"}</button>
-      ${S.mesoList.length>1?`<select onchange="setMeso(this.value)" style="padding:4px 8px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:12px">${S.mesoList.map((m,i)=>`<option value="${m}"${m===S.meso?" selected":""}>${"Meso "+m+(i===S.mesoList.length-1?" ★":"")}</option>`).join("")}</select>`:`<span style="font-size:11px;color:#888">Meso ${S.meso}</span>`}
-      <div class="vtog">
-        <button class="vbtn${v==="workout"?" on":""}" onclick="setView('workout')">Entreno</button>
-        <button class="vbtn${v==="progress"?" on":""}" onclick="setView('progress')">Progreso</button>
-        <button class="vbtn${v==="sync"?" on":""}" onclick="setView('sync')">Sync</button>
-      </div>
-    </div>
-  </div>
-  <div class="daynav">${WDS.map((wd,i)=>{const d=DAYS[i];const act=d.id===S.day;return`<button class="dbtn${act?" on":""}" style="${act?`border-color:${pc};background:${pc}`:""}" onclick="setDay(${d.id})">${wd}<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">${getDayName(d.id)}</span></button>`;}).join("")}</div>
-  <div class="wknav">${WEEKS.map(w=>{const wpc=PC[w.phase];const done=!!S.store[doneKey(S.day,w.id)];const act=w.id===S.week;return`<button class="wkbtn" style="border-color:${act?wpc:"#e0dfd8"};background:${act?wpc:done?wpc+"25":"transparent"};color:${act?"#fff":done?wpc:"#888"};font-weight:${act?500:400}" onclick="setWeek(${w.id})" title="${w.phase}">${w.label}</button>`;}).join("")}<span class="pbadge" style="background:${pc}22;color:${pc}">${wk.phase}</span></div>`;
+  let html='<div class="hdr">'
+    +'<div><span style="font-weight:500;font-size:16px">Training Planner</span><span style="font-size:12px;color:#888;margin-left:8px">Felipe Pacheco</span></div>'
+    +'<div style="display:flex;align-items:center;gap:8px">'
+    +'<button id="syncIcon" onclick="syncCloud()" style="border:none;background:transparent;cursor:pointer;font-size:16px;padding:2px 4px;color:'+(S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888")+'">'+(S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻")+'</button>'
+    +(S.mesoList.length>1?'<select onchange="setMeso(this.value)" style="padding:4px 8px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:12px">'+S.mesoList.map((m,i)=>'<option value="'+m+'"'+(m===S.meso?' selected':'')+'>Meso '+m+(i===S.mesoList.length-1?' ★':'')+'</option>').join('')+'</select>':'<span style="font-size:11px;color:#888">Meso '+S.meso+'</span>')
+    +'<div class="vtog">'
+    +'<button class="vbtn'+(v==="workout"?" on":"")+'" onclick="setView(\'workout\')">Entreno</button>'
+    +'<button class="vbtn'+(v==="progress"?" on":"")+'" onclick="setView(\'progress\')">Progreso</button>'
+    +'<button class="vbtn'+(v==="sync"?" on":"")+'" onclick="setView(\'sync\')">Sync</button>'
+    +'</div></div></div>';
+
+  html+='<div class="daynav">'+WDS.map((wd,i)=>{
+    const d=DAYS[i];const act=d.id===S.day;
+    return'<button class="dbtn'+(act?' on':'')+'" style="'+(act?'border-color:'+pc+';background:'+pc:'')+'" onclick="setDay('+d.id+')">'+wd+'<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">'+getDayName(d.id)+'</span></button>';
+  }).join('')+'</div>';
+
+  html+='<div class="wknav">'+WEEKS.map(w=>{
+    const wpc=PC[w.phase];const done=!!S.store[doneKey(S.day,w.id)];const act=w.id===S.week;
+    return'<button class="wkbtn" style="border-color:'+(act?wpc:'#e0dfd8')+';background:'+(act?wpc:done?wpc+'25':'transparent')+';color:'+(act?'#fff':done?wpc:'#888')+';font-weight:'+(act?500:400)+'" onclick="setWeek('+w.id+')" title="'+w.phase+'">'+w.label+'</button>';
+  }).join('')+'<span class="pbadge" style="background:'+pc+'22;color:'+pc+'">'+wk.phase+'</span></div>';
 
   if(v==="workout"){
-    html+=`
-    ${v==="workout"?`<div class="dname-bar"><span style="font-size:11px;color:#888;white-space:nowrap">${WDS[S.day-1]} —</span><input type="text" value="${getDayName(S.day).replace(/"/g,"&quot;")}" onchange="setDayName(${S.day},this.value)" placeholder="Nombre del entrenamiento..."></div>`:""}
-    <div class="thead"><span class="th" style="width:38%">Ejercicio</span><span class="th" style="width:16%">Detalles</span><span class="th" style="width:12%">Desc.</span><span class="th" style="width:20%">Prescripción</span><span class="th" style="width:14%">kg</span></div>
-    ${exs.map((ex,i)=>{
+    html+='<div class="dname-bar"><span style="font-size:11px;color:#888;white-space:nowrap">'+WDS[S.day-1]+' —</span>'
+      +'<input type="text" value="'+getDayName(S.day).replace(/"/g,'&quot;')+'" onchange="setDayName('+S.day+',this.value)" placeholder="Nombre del entrenamiento..."></div>';
+    html+='<div class="thead"><span class="th" style="width:38%">Ejercicio</span><span class="th" style="width:16%">Detalles</span><span class="th" style="width:12%">Desc.</span><span class="th" style="width:20%">Prescripción</span><span class="th" style="width:14%">kg</span></div>';
+    html+=exs.map((ex,i)=>{
       const pres=ex.weeks[S.week-1];
       const skip=!pres||pres==="-";
       const kg=S.store[kgKey(S.day,S.week,i)]||"";
       const note=S.store[noteKey(S.day,S.week,i)]||"";
       const isExp=S.exp===i;
-      return`<div class="exrow">
-        <div class="exmain${skip?" skip":""}${isExp?" exp":""}" onclick="${skip?"":"toggleEx("+i+")"}">
-          <span style="width:38%;font-size:13px">${ex.name}</span>
-          <span style="width:16%;font-size:11px;color:#888">${ex.details||"—"}</span>
-          <span style="width:12%;font-size:11px;color:#888">${ex.rest||"—"}</span>
-          <span style="width:20%;font-size:13px;font-weight:500;color:${skip?"#888":pc}">${skip?"—":pres}</span>
-          <span style="width:14%;font-size:12px">${kg?`<span style="color:${pc};font-weight:500">${kg} kg</span>`:`<span style="color:#ccc">—</span>`}</span>
-        </div>
-        ${isExp&&!skip?`<div class="exexp"><div><label>Carga (kg)</label><input type="number" value="${kg}" placeholder="0" style="width:80px" oninput="updKg(${S.day},${S.week},${i},this.value)"></div><div style="flex:1"><label>Observaciones</label><input type="text" value="${note.replace(/"/g,"&quot;")}" placeholder="Notas..." style="width:100%" oninput="updNote(${S.day},${S.week},${i},this.value)"></div></div>`:""}
-      </div>`;
-    }).join("")}
-    <div style="padding:1rem 16px 0"><button class="donebtn" style="background:${isDone?"#1D9E75":pc}" onclick="toggleDone(${S.day},${S.week})">${isDone?"✓ Completada":"Marcar sesión completada"}</button></div>`;
+      return'<div class="exrow">'
+        +'<div class="exmain'+(skip?' skip':'')+(isExp?' exp':'')+'" onclick="'+(skip?'':'toggleEx('+i+')')+'"><span style="width:38%;font-size:13px">'+ex.name+'</span><span style="width:16%;font-size:11px;color:#888">'+(ex.details||'—')+'</span><span style="width:12%;font-size:11px;color:#888">'+(ex.rest||'—')+'</span><span style="width:20%;font-size:13px;font-weight:500;color:'+(skip?'#888':pc)+'">'+(skip?'—':pres)+'</span><span style="width:14%;font-size:12px">'+(kg?'<span style="color:'+pc+';font-weight:500">'+kg+' kg</span>':'<span style="color:#ccc">—</span>')+'</span></div>'
+        +(isExp&&!skip?'<div class="exexp"><div><label>Carga (kg)</label><input type="number" value="'+kg+'" placeholder="0" style="width:80px" oninput="updKg('+S.day+','+S.week+','+i+',this.value)"></div><div style="flex:1"><label>Observaciones</label><input type="text" value="'+note.replace(/"/g,'&quot;')+'" placeholder="Notas..." style="width:100%" oninput="updNote('+S.day+','+S.week+','+i+',this.value)"></div></div>':'')
+        +'</div>';
+    }).join('');
+    html+='<div style="padding:1rem 16px 0"><button class="donebtn" style="background:'+(isDone?'#1D9E75':pc)+'" onclick="toggleDone('+S.day+','+S.week+')">'+(isDone?'✓ Completada':'Marcar sesión completada')+'</button></div>';
   }
 
-  if(v==="progress") html+=renderProgress(exs);
-  if(v==="sync") html+=renderSync();
+  if(v==="progress")html+=renderProgress(exs);
+  if(v==="sync")html+=renderSync();
 
   document.getElementById("app").innerHTML=html;
-  if(v==="progress") initChart(exs);
+  if(v==="progress")initCharts();
 }
 
 function renderProgress(exs){
-  const sel=S.progEx;
-  const datasets=S.mesoList.map((mid,mi)=>{
-    const data=WEEKS.map(w=>{
-      const k=mid==="1"?`kg-${S.day}-${w.id}-${sel}`:`kg-${S.day}-${w.id}-${sel}-m${mid}`;
-      return parseFloat(S.store[k])||null;
-    });
-    return{label:`Mesociclo ${mi+1}`,data,color:MC[mi%6]};
-  });
+  const datasets=buildDatasets();
   const allVals=datasets.flatMap(d=>d.data).filter(v=>v!==null);
   const hasData=allVals.length>0;
   const gMax=hasData?Math.max(...allVals):0;
@@ -405,67 +375,87 @@ function renderProgress(exs){
   const lastMax=lastVals.length?Math.max(...lastVals):0;
   const firstMax=firstVals.length?Math.max(...firstVals):0;
   const pct=firstMax?Math.round(((lastMax-firstMax)/firstMax)*100):0;
-const lastKg=lastVals.length?lastVals[lastVals.length-1]:0;
-  const totalSessions=datasets.flatMap(d=>d.data).filter(v=>v!==null).length;
+  const lastKg=lastVals.length?lastVals[lastVals.length-1]:0;
   const globalPoints=[],globalColors=[],globalLabels=[];
-  datasets.forEach((ds,mi)=>{ds.data.forEach((v,wi)=>{if(v!==null){globalPoints.push(v);globalColors.push(MC[mi%6]);globalLabels.push(`${ds.label} S${wi+1}`);}});});
+  datasets.forEach((ds,mi)=>{ds.data.forEach((v,wi)=>{if(v!==null){globalPoints.push(v);globalColors.push(MC[mi%6]);globalLabels.push(ds.label+' S'+(wi+1));}});});
+  const totalSessions=globalPoints.length;
   const mesoMaxes=datasets.map(d=>{const v=d.data.filter(x=>x!==null);return v.length?Math.max(...v):0;});
-  const ptab=S.progTab||'meso';
-  return`<div style="padding:1rem">
-    <select style="width:100%;padding:6px 10px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:13px;margin-bottom:1rem" onchange="setProgEx(this.value)">
-      ${exs.map((ex,i)=>`<option value="${i}"${i===sel?" selected":""}>${ex.name}</option>`).join("")}
-  </select>
-    <div style="display:flex;border-bottom:.5px solid #e0dfd8;margin-bottom:1rem">
-      <button onclick="setProgTab('meso')" style="flex:1;padding:8px;border:none;background:transparent;font-size:13px;cursor:pointer;border-bottom:${ptab==='meso'?'2px solid #378ADD':'2px solid transparent'};color:${ptab==='meso'?'#378ADD':'#888'};font-weight:${ptab==='meso'?500:400}">Por mesociclo</button>
-      <button onclick="setProgTab('global')" style="flex:1;padding:8px;border:none;background:transparent;font-size:13px;cursor:pointer;border-bottom:${ptab==='global'?'2px solid #378ADD':'2px solid transparent'};color:${ptab==='global'?'#378ADD':'#888'};font-weight:${ptab==='global'?500:400}">Global histórico</button>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem">
-      <div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">Máximo histórico</div><div style="font-size:20px;font-weight:500">${gMax||"—"}${gMax?" kg":""}</div></div>
-      <div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">Progreso total</div><div style="font-size:20px;font-weight:500;color:${pct>=0?"#1D9E75":"#e24b4a"}">${hasData?(pct>=0?"+":"")+pct+"%":"—"}</div></div>
-      <div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">${ptab==='meso'?'Última carga':'Sesiones totales'}</div><div style="font-size:20px;font-weight:500">${ptab==='meso'?(lastKg||"—")+(lastKg?" kg":""):totalSessions}</div></div>
-    </div>
-${!hasData?`<p style="text-align:center;color:#888;font-size:13px;padding:2rem 0">Sin cargas registradas aún.</p>`:`
-    <div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Progreso por mesociclo</span><div style="display:flex;gap:10px;flex-wrap:wrap">${datasets.map(ds=>`<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#888"><span style="width:10px;height:2px;background:${ds.color};display:inline-block;border-radius:1px"></span><span style="width:8px;height:8px;border-radius:50%;background:${ds.color};display:inline-block"></span>${ds.label}</span>`).join("")}</div></div><div style="padding:12px 16px;position:relative;height:220px"><canvas id="progChart"></canvas></div></div>
-    <div class="card"><div class="cardh"><span style="font-size:13px;font-weight:500">Máximo por mesociclo</span></div>${datasets.map((ds,mi)=>{const vals=ds.data.filter(v=>v!==null);if(!vals.length)return"";const mx=Math.max(...vals);const prev=mi>0?Math.max(...(datasets[mi-1].data.filter(v=>v!==null).length?datasets[mi-1].data.filter(v=>v!==null):[0])):null;const diff=prev!==null?(mx-prev).toFixed(1):null;return`<div class="histrow"><div style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:50%;background:${ds.color};display:inline-block"></span><span>${ds.label}</span></div><div style="display:flex;align-items:center;gap:10px">${diff!==null?`<span style="font-size:11px;color:${parseFloat(diff)>=0?"#1D9E75":"#e24b4a"}">${parseFloat(diff)>=0?"+":""}${diff} kg</span>`:""}<span style="font-weight:500">${mx} kg</span></div></div>`;}).join("")}</div>`}
-  </div>`;
+  const ptab=S.progTab;
+
+  let h='<div style="padding:1rem">';
+  h+='<select style="width:100%;padding:6px 10px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:13px;margin-bottom:.75rem" onchange="setProgEx(this.value">'+exs.map((ex,i)=>'<option value="'+i+'"'+(i===S.progEx?' selected':'')+'>'+ex.name+'</option>').join('')+'</select>';
+  h+='<div class="ptabs">'
+    +'<button class="ptab" onclick="setProgTab(\'meso\')" style="border-bottom:'+(ptab==='meso'?'2px solid #378ADD':'2px solid transparent')+';color:'+(ptab==='meso'?'#378ADD':'#888')+';font-weight:'+(ptab==='meso'?500:400)+'">Por mesociclo</button>'
+    +'<button class="ptab" onclick="setProgTab(\'global\')" style="border-bottom:'+(ptab==='global'?'2px solid #378ADD':'2px solid transparent')+';color:'+(ptab==='global'?'#378ADD':'#888')+';font-weight:'+(ptab==='global'?500:400)+'">Global histórico</button>'
+    +'</div>';
+
+  if(!hasData){h+='<p style="text-align:center;color:#888;font-size:13px;padding:2rem 0">Sin cargas registradas aún.</p></div>';return h;}
+
+  h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem">'
+    +'<div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">Máximo histórico</div><div style="font-size:20px;font-weight:500">'+gMax+' kg</div></div>'
+    +'<div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">Progreso total</div><div style="font-size:20px;font-weight:500;color:'+(pct>=0?'#1D9E75':'#e24b4a')+'">'+(pct>=0?'+':'')+pct+'%</div></div>'
+    +'<div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">'+(ptab==='meso'?'Última carga':'Sesiones totales')+'</div><div style="font-size:20px;font-weight:500">'+(ptab==='meso'?lastKg+' kg':totalSessions)+'</div></div>'
+    +'</div>';
+
+  if(ptab==='meso'){
+    h+='<div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Progreso por mesociclo</span>'
+      +'<div style="display:flex;gap:10px;flex-wrap:wrap">'+datasets.map(ds=>'<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#888"><span style="width:10px;height:2px;background:'+ds.color+';display:inline-block;border-radius:1px"></span><span style="width:8px;height:8px;border-radius:50%;background:'+ds.color+';display:inline-block"></span>'+ds.label+'</span>').join('')+'</div>'
+      +'</div><div style="padding:12px 16px;position:relative;height:220px"><canvas id="progChart" role="img" aria-label="Progreso por mesociclo">Progreso de carga.</canvas></div></div>';
+    h+='<div class="card"><div class="cardh"><span style="font-size:13px;font-weight:500">Máximo por mesociclo</span></div>'
+      +datasets.map((ds,mi)=>{
+        const vals=ds.data.filter(v=>v!==null);if(!vals.length)return'';
+        const mx=Math.max(...vals);
+        const prev=mi>0?Math.max(...(datasets[mi-1].data.filter(v=>v!==null).length?datasets[mi-1].data.filter(v=>v!==null):[0])):null;
+        const diff=prev!==null?(mx-prev).toFixed(1):null;
+        return'<div class="histrow"><div style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:50%;background:'+ds.color+';display:inline-block"></span>'+ds.label+'<span style="font-size:11px;color:#888">('+ds.weeks+' sem.)</span></div>'
+          +'<div style="display:flex;align-items:center;gap:10px">'+(diff!==null?'<span style="font-size:11px;color:'+(parseFloat(diff)>=0?'#1D9E75':'#e24b4a')+'">'+(parseFloat(diff)>=0?'+':'')+diff+' kg</span>':'')+'<span style="font-weight:500">'+mx+' kg</span></div></div>';
+      }).join('')+'</div>';
+  } else {
+    h+='<div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Evolución continua (todas las sesiones)</span></div>'
+      +'<div style="padding:12px 16px;position:relative;height:220px"><canvas id="progChart" role="img" aria-label="Evolución continua">Evolución histórica.</canvas></div></div>';
+    h+='<div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Máximo por mesociclo</span></div>'
+      +'<div style="padding:12px 16px;position:relative;height:160px"><canvas id="summaryChart" role="img" aria-label="Máximo por mesociclo">Máximos.</canvas></div></div>';
+  }
+
+  h+='</div>';
+  h+='<script>window.__pd='+JSON.stringify({ptab,datasets,globalPoints,globalColors,globalLabels,mesoMaxes})+';<\/script>';
+  return h;
 }
 
-function initChart(exs){
-  const d=window.__progData;
-  if(!d||!d.hasData) return;
+function initCharts(){
+  const d=window.__pd;
+  if(!d)return;
   if(S.chart){S.chart.destroy();S.chart=null;}
   if(S.chart2){S.chart2.destroy();S.chart2=null;}
 
   if(d.ptab==='meso'){
     const canvas=document.getElementById('progChart');
-    if(!canvas) return;
+    if(!canvas)return;
     const maxW=Math.max(...d.datasets.map(ds=>ds.weeks));
-    const labels=Array.from({length:maxW},(_,i)=>`S${i+1}`);
-    const chartDatasets=d.datasets.map(ds=>{
+    const labels=Array.from({length:maxW},(_,i)=>'S'+(i+1));
+    const cds=d.datasets.map(ds=>{
       const padded=[...ds.data,...Array(maxW-ds.weeks).fill(null)];
       return{label:ds.label,data:padded,borderColor:ds.color,backgroundColor:ds.color,
-        pointBackgroundColor:padded.map(v=>v!==null?ds.color:"transparent"),
-        pointBorderColor:padded.map(v=>v!==null?ds.color:"transparent"),
+        pointBackgroundColor:padded.map(v=>v!==null?ds.color:'transparent'),
+        pointBorderColor:padded.map(v=>v!==null?ds.color:'transparent'),
         pointRadius:padded.map(v=>v!==null?6:0),pointHoverRadius:9,
         borderWidth:2,spanGaps:false,tension:.3};
     });
-    S.chart=new Chart(canvas,{type:'line',data:{labels,datasets:chartDatasets},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
-        tooltip:{filter:i=>i.raw!==null,callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.raw} kg`}}},
-        scales:{x:{grid:{display:false},ticks:{color:"#888",font:{size:11},autoSkip:false}},
-          y:{grid:{color:"rgba(0,0,0,.05)"},ticks:{color:"#888",font:{size:11},callback:v=>v+" kg"},beginAtZero:false}}}});
+    S.chart=new Chart(canvas,{type:'line',data:{labels,datasets:cds},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{filter:i=>i.raw!==null,callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' kg'}}},
+        scales:{x:{grid:{display:false},ticks:{color:'#888',font:{size:11},autoSkip:false}},
+          y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:v=>v+' kg'},beginAtZero:false}}}});
   } else {
     const c1=document.getElementById('progChart');
     if(c1){
       S.chart=new Chart(c1,{type:'line',data:{labels:d.globalLabels,datasets:[{
         label:'Carga',data:d.globalPoints,borderColor:'rgba(180,178,169,.3)',
         backgroundColor:'rgba(180,178,169,.3)',borderWidth:1.5,tension:.3,showLine:true,
-        pointBackgroundColor:d.globalColors,pointBorderColor:d.globalColors,
-        pointRadius:5,pointHoverRadius:7}]},
-        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
-          tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${ctx.raw} kg`}}},
-          scales:{x:{display:false},y:{grid:{color:"rgba(0,0,0,.05)"},
-            ticks:{color:"#888",font:{size:11},callback:v=>v+" kg"},beginAtZero:false}}}});
+        pointBackgroundColor:d.globalColors,pointBorderColor:d.globalColors,pointRadius:5,pointHoverRadius:7}]},
+        options:{responsive:true,maintainAspectRatio:false,
+          plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' kg'}}},
+          scales:{x:{display:false},y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:v=>v+' kg'},beginAtZero:false}}}});
     }
     setTimeout(()=>{
       const c2=document.getElementById('summaryChart');
@@ -473,56 +463,32 @@ function initChart(exs){
         S.chart2=new Chart(c2,{type:'bar',data:{
           labels:d.datasets.map(ds=>ds.label),
           datasets:[{label:'Máximo',data:d.mesoMaxes,backgroundColor:d.datasets.map(ds=>ds.color),borderRadius:3}]},
-          options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
-            tooltip:{callbacks:{label:ctx=>`${ctx.raw} kg`}}},
-            scales:{x:{grid:{display:false},ticks:{color:"#888",font:{size:11}}},
-              y:{grid:{color:"rgba(0,0,0,.05)"},ticks:{color:"#888",font:{size:11},callback:v=>v+" kg"},beginAtZero:false}}}});
+          options:{responsive:true,maintainAspectRatio:false,
+            plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' kg'}}},
+            scales:{x:{grid:{display:false},ticks:{color:'#888',font:{size:11}}},
+              y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:v=>v+' kg'},beginAtZero:false}}}});
       }
     },50);
   }
-}
-  const canvas=document.getElementById("progChart");
-  if(!canvas) return;
-  if(S.chart){S.chart.destroy();S.chart=null;}
-  const sel=S.progEx;
-  const datasets=S.mesoList.map((mid,mi)=>{
-    const data=WEEKS.map(w=>{
-      const k=mid==="1"?`kg-${S.day}-${w.id}-${sel}`:`kg-${S.day}-${w.id}-${sel}-m${mid}`;
-      return parseFloat(S.store[k])||null;
-    });
-    const c=MC[mi%6];
-    return{label:`Mesociclo ${mi+1}`,data,borderColor:c,backgroundColor:c,
-      pointBackgroundColor:data.map(v=>v!==null?c:"transparent"),
-      pointBorderColor:data.map(v=>v!==null?c:"transparent"),
-      pointRadius:data.map(v=>v!==null?6:0),pointHoverRadius:9,
-      borderWidth:2,borderDash:[[4,3],[2,2],[],[5,2],[3,3],[1,2]][mi%6],
-      spanGaps:false,tension:.3};
-  });
-  S.chart=new Chart(canvas,{type:"line",data:{labels:WEEKS.map(w=>w.label),datasets},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
-      tooltip:{filter:i=>i.raw!==null,callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.raw} kg`}}},
-      scales:{x:{grid:{display:false},ticks:{color:"#888",font:{size:11},autoSkip:false}},
-        y:{grid:{color:"rgba(0,0,0,.05)"},ticks:{color:"#888",font:{size:11},callback:v=>v+" kg"},beginAtZero:false}}}});
 }
 
 function renderSync(){
   const msg=S.importMsg;
   const isOk=msg.startsWith("ok:");
   const txt=msg.replace(/^(ok|err):/,"");
-  return`<div style="padding:1.25rem 16px">
-    <input id="fileIn" type="file" accept=".xlsx,.xls" style="display:none" onchange="onFile(this)">
-    <div class="syncard"><h3>1. Importar planilla del entrenador</h3><p>Sube el .xlsx que te envía cada domingo. La app carga todos los mesociclos automáticamente.</p><button style="padding:8px 18px;border-radius:8px;border:.5px solid #ccc;background:transparent;font-size:13px;cursor:pointer" onclick="document.getElementById('fileIn').click()">Subir archivo .xlsx</button></div>
-    <div class="syncard"><h3>2. Exportar cargas al entrenador</h3><p>Genera el mismo .xlsx con tus cargas ejecutadas rellenadas.</p><button style="padding:8px 18px;border-radius:8px;border:none;color:#fff;font-size:13px;font-weight:500;cursor:pointer;background:${S.xlsxMeta?"#378ADD":"#ccc"}" onclick="handleExport()">Descargar .xlsx con cargas</button></div>
-    ${msg?`<div class="msg ${isOk?"ok":"err"}">${txt}</div>`:""}
-    <div style="padding:12px 14px;background:#f5f5f3;border-radius:8px;font-size:12px;color:#888;line-height:1.6;margin-top:12px"><strong style="color:#1a1a1a">Flujo semanal:</strong><br>Lun–Vie: registra cargas → Dom: exporta → envía → importa nueva planilla</div>
-  </div>`;
+  return'<div style="padding:1.25rem 16px">'
+    +'<input id="fileIn" type="file" accept=".xlsx,.xls" style="display:none" onchange="onFile(this)">'
+    +'<div class="syncard"><h3>1. Importar planilla del entrenador</h3><p>Sube el .xlsx que te envía cada domingo.</p><button style="padding:8px 18px;border-radius:8px;border:.5px solid #ccc;background:transparent;font-size:13px;cursor:pointer" onclick="document.getElementById(\'fileIn\').click()">Subir archivo .xlsx</button></div>'
+    +'<div class="syncard"><h3>2. Exportar cargas al entrenador</h3><p>Genera el mismo .xlsx con tus cargas ejecutadas.</p><button style="padding:8px 18px;border-radius:8px;border:none;color:#fff;font-size:13px;font-weight:500;cursor:pointer;background:'+(S.xlsxMeta?'#378ADD':'#ccc')+'" onclick="handleExport()">Descargar .xlsx con cargas</button></div>'
+    +(msg?'<div class="msg '+(isOk?'ok':'err')+'">'+txt+'</div>':'')
+    +'<div style="padding:12px 14px;background:#f5f5f3;border-radius:8px;font-size:12px;color:#888;line-height:1.6;margin-top:12px"><strong style="color:#1a1a1a">Flujo semanal:</strong><br>Lun–Vie: registra cargas → Dom: exporta → envía → importa nueva planilla</div>'
+    +'</div>';
 }
 
-// ── Event handlers ─────────────────────────────────────────────────────────
 function setView(v){S.view=v;S.importMsg="";if(S.chart&&v!=="progress"){S.chart.destroy();S.chart=null;}if(S.chart2&&v!=="progress"){S.chart2.destroy();S.chart2=null;}render();}
 function setDay(d){S.day=d;S.exp=null;render();}
 function setWeek(w){S.week=w;S.exp=null;render();}
-function setMeso(m){S.meso=m;const mm=S.mesoMeta[m];if(mm?.planData)S.plan=mm.planData;S.exp=null;render();}
+function setMeso(m){S.meso=m;const mm=S.mesoMeta[m];if(mm&&mm.planData)S.plan=mm.planData;S.exp=null;render();}
 function toggleEx(i){S.exp=S.exp===i?null:i;render();}
 function updKg(d,w,i,v){S.store[kgKey(d,w,i)]=v;saveStore();}
 function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();}
@@ -530,17 +496,15 @@ function toggleDone(d,w){const k=doneKey(d,w);S.store[k]=!S.store[k];saveStore()
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
 function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
 function setProgTab(t){S.progTab=t;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
-function setProgTab(t){S.progTab=t;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
 function onFile(input){if(input.files[0])handleImport(input.files[0]);}
 
-// ── Boot ───────────────────────────────────────────────────────────────────
 loadLocal();
-if(S.store["_mesoList"]) try{S.mesoList=JSON.parse(S.store["_mesoList"]);S.meso=S.mesoList[S.mesoList.length-1];}catch{}
-if(S.store["_mesoMeta"]) try{S.mesoMeta=JSON.parse(S.store["_mesoMeta"]);const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}catch{}
-if(S.store["_mesoWeeks"]) try{S.mesoWeeks=JSON.parse(S.store["_mesoWeeks"]);}catch{}
+if(S.store["_mesoList"])try{S.mesoList=JSON.parse(S.store["_mesoList"]);S.meso=S.mesoList[S.mesoList.length-1];}catch{}
+if(S.store["_mesoMeta"])try{S.mesoMeta=JSON.parse(S.store["_mesoMeta"]);const m=S.mesoMeta[S.meso];if(m&&m.planData)S.plan=m.planData;}catch{}
+if(S.store["_mesoWeeks"])try{S.mesoWeeks=JSON.parse(S.store["_mesoWeeks"]);}catch{}
 render();
-setTimeout(syncCloud, 800);
-setInterval(()=>{if(!S.syncing)syncCloud();}, 60000);
+setTimeout(syncCloud,800);
+setInterval(()=>{if(!S.syncing)syncCloud();},60000);
 </script>
 </body>
 </html>
