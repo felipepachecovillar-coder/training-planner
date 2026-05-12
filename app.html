@@ -140,7 +140,7 @@ const S = {
   mesoList:["1"], mesoMeta:{}, meso:"1",
   mesoWeeks:{"1":10},
   store:{}, xlsxMeta:null, importMsg:"",
-  progEx:0, chart:null, syncStatus:"idle",
+  progEx:0, chart:null, chart2:null, progTab:'meso', syncStatus:"idle",
   syncing:false
 };
 
@@ -264,10 +264,9 @@ async function handleImport(file){
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
       const dayBlocks=parseDayBlocks(rows);
       if(!dayBlocks.length) return;
-    S.mesoList.push(mid);
+          S.mesoList.push(mid);
       const maxWeek = dayBlocks.detectedWeeks || 10;
       S.mesoWeeks[mid] = maxWeek;
-      console.log(`Meso ${mid} (${sn}): ${maxWeek} semanas detectadas`);
       const planData={}, dayNames={};
       dayBlocks.forEach((block,di)=>{
         const dayId=di+1;
@@ -332,10 +331,8 @@ async function handleExport(){
 
 // ── Render ─────────────────────────────────────────────────────────────────
 function render(){
-  // Update WEEKS based on current meso
   const numWeeks = S.mesoWeeks[S.meso] || 10;
   WEEKS = ALL_WEEKS.slice(0, numWeeks);
-  // Clamp active week
   if(S.week > numWeeks) S.week = numWeeks;
 
   const wk=WEEKS[S.week-1];
@@ -463,7 +460,7 @@ function renderSync(){
 }
 
 // ── Event handlers ─────────────────────────────────────────────────────────
-function setView(v){S.view=v;S.importMsg="";if(S.chart&&v!=="progress"){S.chart.destroy();S.chart=null;}render();}
+function setView(v){S.view=v;S.importMsg="";if(S.chart&&v!=="progress"){S.chart.destroy();S.chart=null;}if(S.chart2&&v!=="progress"){S.chart2.destroy();S.chart2=null;}render();}
 function setDay(d){S.day=d;S.exp=null;render();}
 function setWeek(w){S.week=w;S.exp=null;render();}
 function setMeso(m){S.meso=m;const mm=S.mesoMeta[m];if(mm?.planData)S.plan=mm.planData;S.exp=null;render();}
@@ -472,7 +469,8 @@ function updKg(d,w,i,v){S.store[kgKey(d,w,i)]=v;saveStore();}
 function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();}
 function toggleDone(d,w){const k=doneKey(d,w);S.store[k]=!S.store[k];saveStore();render();}
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
-function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}render();}
+function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
+function setProgTab(t){S.progTab=t;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
 function onFile(input){if(input.files[0])handleImport(input.files[0]);}
 
 // ── Boot ───────────────────────────────────────────────────────────────────
