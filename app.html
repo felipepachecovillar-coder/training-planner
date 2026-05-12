@@ -383,7 +383,7 @@ function renderProgress(exs){
   const ptab=S.progTab;
 
   let h='<div style="padding:1rem">';
-  h+='<select style="width:100%;padding:6px 10px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:13px;margin-bottom:.75rem" onchange="setProgEx(this.value">'+exs.map((ex,i)=>'<option value="'+i+'"'+(i===S.progEx?' selected':'')+'>'+ex.name+'</option>').join('')+'</select>';
+  h+='<select style="width:100%;padding:6px 10px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:13px;margin-bottom:.75rem" onchange="setProgEx(this.value)">'+exs.map((ex,i)=>'<option value="'+i+'"'+(i===S.progEx?' selected':'')+'>'+ex.name+'</option>').join('')+'</select>';
   h+='<div class="ptabs">'
     +'<button class="ptab" onclick="setProgTab(\'meso\')" style="border-bottom:'+(ptab==='meso'?'2px solid #378ADD':'2px solid transparent')+';color:'+(ptab==='meso'?'#378ADD':'#888')+';font-weight:'+(ptab==='meso'?500:400)+'">Por mesociclo</button>'
     +'<button class="ptab" onclick="setProgTab(\'global\')" style="border-bottom:'+(ptab==='global'?'2px solid #378ADD':'2px solid transparent')+';color:'+(ptab==='global'?'#378ADD':'#888')+';font-weight:'+(ptab==='global'?500:400)+'">Global histórico</button>'
