@@ -409,12 +409,30 @@ function renderProgress(exs){
   return`<div style="padding:1rem">
     <select style="width:100%;padding:6px 10px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:13px;margin-bottom:1rem" onchange="setProgEx(this.value)">
       ${exs.map((ex,i)=>`<option value="${i}"${i===sel?" selected":""}>${ex.name}</option>`).join("")}
-    </select>
-    <div class="metric-grid">
-      <div class="metric-card"><div style="font-size:11px;color:#888;margin-bottom:4px">Máximo histórico</div><div style="font-size:20px;font-weight:500">${gMax||"—"}${gMax?" kg":""}</div></div>
-      <div class="metric-card"><div style="font-size:11px;color:#888;margin-bottom:4px">Progreso total</div><div style="font-size:20px;font-weight:500;color:${pct>=0?"#1D9E75":"#e24b4a"}">${hasData?(pct>=0?"+":"")+pct+"%":"—"}</div></div>
-      <div class="metric-card"><div style="font-size:11px;color:#888;margin-bottom:4px">Última carga</div><div style="font-size:20px;font-weight:500">${lastKg||"—"}${lastKg?" kg":""}</div></div>
+   </select>
+
+    <div style="display:flex;border-bottom:.5px solid #e0dfd8;margin-bottom:1rem">
+      <button onclick="setProgTab('meso')" style="flex:1;padding:8px;border:none;background:transparent;font-size:13px;cursor:pointer;border-bottom:${S.progTab==='meso'?'2px solid #378ADD':'2px solid transparent'};color:${S.progTab==='meso'?'#378ADD':'#888'};font-weight:${S.progTab==='meso'?500:400}">Por mesociclo</button>
+      <button onclick="setProgTab('global')" style="flex:1;padding:8px;border:none;background:transparent;font-size:13px;cursor:pointer;border-bottom:${S.progTab==='global'?'2px solid #378ADD':'2px solid transparent'};color:${S.progTab==='global'?'#378ADD':'#888'};font-weight:${S.progTab==='global'?500:400}">Global histórico</button>
     </div>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem">
+      <div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">Máximo histórico</div><div style="font-size:20px;font-weight:500">${gMax||"—"}${gMax?" kg":""}</div></div>
+      <div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">Progreso total</div><div style="font-size:20px;font-weight:500;color:${pct>=0?"#1D9E75":"#e24b4a"}">${hasData?(pct>=0?"+":"")+pct+"%":"—"}</div></div>
+      <div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">${S.progTab==='meso'?'Última carga':'Sesiones totales'}</div><div style="font-size:20px;font-weight:500">${S.progTab==='meso'?lastKg+' kg':totalSessions}</div></div>
+    </div>
+
+    ${!hasData?`<p style="text-align:center;color:#888;font-size:13px;padding:2rem 0">Sin cargas registradas aún.</p>`:`
+    ${S.progTab==='meso'?`
+      <div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Progreso por mesociclo</span><div style="display:flex;gap:10px;flex-wrap:wrap">${datasets.map(ds=>`<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#888"><span style="width:10px;height:2px;background:${ds.color};display:inline-block;border-radius:1px"></span><span style="width:8px;height:8px;border-radius:50%;background:${ds.color};display:inline-block"></span>${ds.label}</span>`).join("")}</div></div><div style="padding:12px 16px;position:relative;height:220px"><canvas id="progChart" role="img" aria-label="Progreso por mesociclo">Progreso de carga.</canvas></div></div>
+      <div class="card"><div class="cardh"><span style="font-size:13px;font-weight:500">Máximo por mesociclo</span></div>${datasets.map((ds,mi)=>{const vals=ds.data.filter(v=>v!==null);if(!vals.length)return"";const mx=Math.max(...vals);const prev=mi>0?Math.max(...(datasets[mi-1].data.filter(v=>v!==null).length?datasets[mi-1].data.filter(v=>v!==null):[0])):null;const diff=prev!==null?(mx-prev).toFixed(1):null;return`<div class="histrow"><div style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:50%;background:${ds.color};display:inline-block"></span>${ds.label}<span style="font-size:11px;color:#888">(${ds.weeks} sem.)</span></div><div style="display:flex;align-items:center;gap:10px">${diff!==null?`<span style="font-size:11px;color:${parseFloat(diff)>=0?'#1D9E75':'#e24b4a'}">${parseFloat(diff)>=0?'+':''}${diff} kg</span>`:''}<span style="font-weight:500">${mx} kg</span></div></div>`;}).join("")}</div>
+    `:`
+      <div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Evolución continua</span></div><div style="padding:12px 16px;position:relative;height:220px"><canvas id="progChart" role="img" aria-label="Evolución continua">Evolución histórica.</canvas></div></div>
+      <div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Máximo por mesociclo</span></div><div style="padding:12px 16px;position:relative;height:160px"><canvas id="summaryChart" role="img" aria-label="Máximo por mesociclo">Máximos.</canvas></div></div>
+    `}
+    `}
+  </div>
+  <script>window.__progData=${JSON.stringify({ptab:S.progTab,datasets,globalPoints,globalColors,globalLabels,mesoMaxes,hasData,totalSessions})};</script>`;
     ${!hasData?`<p style="text-align:center;color:#888;font-size:13px;padding:2rem 0">Sin cargas registradas aún.</p>`:`
     <div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Progreso por mesociclo</span><div style="display:flex;gap:10px;flex-wrap:wrap">${datasets.map(ds=>`<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#888"><span style="width:10px;height:2px;background:${ds.color};display:inline-block;border-radius:1px"></span><span style="width:8px;height:8px;border-radius:50%;background:${ds.color};display:inline-block"></span>${ds.label}</span>`).join("")}</div></div><div style="padding:12px 16px;position:relative;height:220px"><canvas id="progChart"></canvas></div></div>
     <div class="card"><div class="cardh"><span style="font-size:13px;font-weight:500">Máximo por mesociclo</span></div>${datasets.map((ds,mi)=>{const vals=ds.data.filter(v=>v!==null);if(!vals.length)return"";const mx=Math.max(...vals);const prev=mi>0?Math.max(...(datasets[mi-1].data.filter(v=>v!==null).length?datasets[mi-1].data.filter(v=>v!==null):[0])):null;const diff=prev!==null?(mx-prev).toFixed(1):null;return`<div class="histrow"><div style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:50%;background:${ds.color};display:inline-block"></span><span>${ds.label}</span></div><div style="display:flex;align-items:center;gap:10px">${diff!==null?`<span style="font-size:11px;color:${parseFloat(diff)>=0?"#1D9E75":"#e24b4a"}">${parseFloat(diff)>=0?"+":""}${diff} kg</span>`:""}<span style="font-weight:500">${mx} kg</span></div></div>`;}).join("")}</div>`}
