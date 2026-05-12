@@ -264,9 +264,10 @@ async function handleImport(file){
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
       const dayBlocks=parseDayBlocks(rows);
       if(!dayBlocks.length) return;
-      S.mesoList.push(mid);
+    S.mesoList.push(mid);
       const maxWeek = dayBlocks.detectedWeeks || 10;
       S.mesoWeeks[mid] = maxWeek;
+      console.log(`Meso ${mid} (${sn}): ${maxWeek} semanas detectadas`);
       const planData={}, dayNames={};
       dayBlocks.forEach((block,di)=>{
         const dayId=di+1;
