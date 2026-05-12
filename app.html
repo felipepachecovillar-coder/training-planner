@@ -213,13 +213,23 @@ function getDayName(d){
 // ── XLSX parse ─────────────────────────────────────────────────────────────
 function parseDayBlocks(rows){
   const days=[]; let cur=null; let hRow=-1;
+  let detectedWeeks=0;
   for(let r=0;r<rows.length;r++){
     let dc=-1;
     for(let c=0;c<=2;c++){if(String(rows[r][c]||"").trim().startsWith("Día")){dc=c;break;}}
     if(dc>=0){
       if(cur) days.push(cur);
       cur={label:String(rows[r][dc]||"").trim(),typeName:String(rows[r][dc+1]||"").trim(),dayCol:dc,exercises:[],headerRow:r+1};
-      hRow=r+1; continue;
+      hRow=r+1;
+      // Count weeks from header row
+      if(detectedWeeks===0){
+        const hdr=rows[hRow]||[];
+        for(let c=0;c<hdr.length;c++){
+          const h=String(hdr[c]||"").trim().toLowerCase();
+          if(/^s\d+$/.test(h)) detectedWeeks=Math.max(detectedWeeks,parseInt(h.replace("s","")));
+        }
+      }
+      continue;
     }
     if(!cur||r<=hRow) continue;
     const dc2=cur.dayCol;
@@ -239,6 +249,7 @@ function parseDayBlocks(rows){
     cur.exercises.push({name,details:String(rows[r][dc2+1]||"").trim(),rest:String(rows[r][dc2+2]||"").trim(),rowIdx:r,weekCols});
   }
   if(cur) days.push(cur);
+  days.detectedWeeks = detectedWeeks || 10;
   return days;
 }
 
@@ -254,14 +265,8 @@ async function handleImport(file){
       const dayBlocks=parseDayBlocks(rows);
       if(!dayBlocks.length) return;
       S.mesoList.push(mid);
-
-      // Detect number of weeks from header columns
-      let maxWeek=0;
-      if(dayBlocks[0]?.exercises[0]?.weekCols?.length){
-        maxWeek=Math.max(...dayBlocks[0].exercises[0].weekCols.map(c=>c.weekNum));
-      }
-      if(!maxWeek) maxWeek=10;
-      S.mesoWeeks[mid]=maxWeek;
+      const maxWeek = dayBlocks.detectedWeeks || 10;
+      S.mesoWeeks[mid] = maxWeek;
       const planData={}, dayNames={};
       dayBlocks.forEach((block,di)=>{
         const dayId=di+1;
