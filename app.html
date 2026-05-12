@@ -54,7 +54,8 @@ button,select,input{font-family:inherit}
 const SK = "tp_v4";
 const PC = {"Acumulación":"#378ADD","Descarga":"#1D9E75","Intensificación":"#BA7517","Taper":"#D4537E","Max Week":"#D85A30"};
 const MC = ["#378ADD","#1D9E75","#BA7517","#D4537E","#D85A30","#534AB7"];
-const WEEKS = Array.from({length:10},(_,i)=>({id:i+1,label:`S${i+1}`,phase:i<4?"Acumulación":i===4?"Descarga":i<8?"Intensificación":i===8?"Taper":"Max Week"}));
+const ALL_WEEKS = Array.from({length:10},(_,i)=>({id:i+1,label:`S${i+1}`,phase:i<4?"Acumulación":i===4?"Descarga":i<8?"Intensificación":i===8?"Taper":"Max Week"}));
+let WEEKS = ALL_WEEKS;
 const DAYS = [{id:1,name:"Upper Body"},{id:2,name:"Lower A"},{id:3,name:"Upper Push"},{id:4,name:"Upper Pull"},{id:5,name:"Lower B"}];
 const WDS = ["Lunes","Martes","Miércoles","Jueves","Viernes"];
 
@@ -133,10 +134,11 @@ const DEFAULT = {
 };
 
 // ── State ──────────────────────────────────────────────────────────────────
-const S = {
+  const S = {
   view:"workout", day:1, week:1, exp:null,
   plan:JSON.parse(JSON.stringify(DEFAULT)),
   mesoList:["1"], mesoMeta:{}, meso:"1",
+  mesoWeeks:{"1":10},
   store:{}, xlsxMeta:null, importMsg:"",
   progEx:0, chart:null, syncStatus:"idle",
   syncing:false
@@ -252,6 +254,14 @@ async function handleImport(file){
       const dayBlocks=parseDayBlocks(rows);
       if(!dayBlocks.length) return;
       S.mesoList.push(mid);
+
+      // Detect number of weeks from header columns
+      let maxWeek=0;
+      if(dayBlocks[0]?.exercises[0]?.weekCols?.length){
+        maxWeek=Math.max(...dayBlocks[0].exercises[0].weekCols.map(c=>c.weekNum));
+      }
+      if(!maxWeek) maxWeek=10;
+      S.mesoWeeks[mid]=maxWeek;
       const planData={}, dayNames={};
       dayBlocks.forEach((block,di)=>{
         const dayId=di+1;
@@ -283,6 +293,7 @@ async function handleImport(file){
     S.mesoList.forEach(mid=>{const m=S.mesoMeta[mid];if(m)mm[mid]={sheetName:m.sheetName,planData:m.planData,dayNames:m.dayNames};});
     S.store["_mesoList"]=JSON.stringify(S.mesoList);
     S.store["_mesoMeta"]=JSON.stringify(mm);
+    S.store["_mesoWeeks"]=JSON.stringify(S.mesoWeeks);
     saveStore();
     S.importMsg=`ok:✓ ${file.name} — ${S.mesoList.length} mesociclos`;
   }catch(e){S.importMsg="err:Error: "+e.message;}
@@ -315,6 +326,12 @@ async function handleExport(){
 
 // ── Render ─────────────────────────────────────────────────────────────────
 function render(){
+  // Update WEEKS based on current meso
+  const numWeeks = S.mesoWeeks[S.meso] || 10;
+  WEEKS = ALL_WEEKS.slice(0, numWeeks);
+  // Clamp active week
+  if(S.week > numWeeks) S.week = numWeeks;
+
   const wk=WEEKS[S.week-1];
   const pc=PC[wk.phase];
   const exs=S.plan[S.day]||[];
@@ -456,6 +473,7 @@ function onFile(input){if(input.files[0])handleImport(input.files[0]);}
 loadLocal();
 if(S.store["_mesoList"]) try{S.mesoList=JSON.parse(S.store["_mesoList"]);S.meso=S.mesoList[S.mesoList.length-1];}catch{}
 if(S.store["_mesoMeta"]) try{S.mesoMeta=JSON.parse(S.store["_mesoMeta"]);const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}catch{}
+if(S.store["_mesoWeeks"]) try{S.mesoWeeks=JSON.parse(S.store["_mesoWeeks"]);}catch{}
 render();
 setTimeout(syncCloud, 800);
 setInterval(()=>{if(!S.syncing)syncCloud();}, 60000);
