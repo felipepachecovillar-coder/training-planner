@@ -362,7 +362,7 @@ function render(){
   if(v==="sync")html+=renderSync();
 
   document.getElementById("app").innerHTML=html;
-  if(v==="progress")initCharts();
+  if(v==="progress") setTimeout(initCharts, 50);
 }
 
 function renderProgress(exs){
@@ -418,22 +418,29 @@ function renderProgress(exs){
   }
 
   h+='</div>';
-  h+='<script>window.__pd='+JSON.stringify({ptab,datasets,globalPoints,globalColors,globalLabels,mesoMaxes})+';<\/script>';
   return h;
 }
 
 function initCharts(){
-  const d=window.__pd;
-  if(!d)return;
+  if(S.view!=='progress')return;
+  const exs=S.plan[S.day]||[];
+  const datasets=buildDatasets();
+  const allVals=datasets.flatMap(d=>d.data).filter(v=>v!==null);
+  if(!allVals.length)return;
+  const globalPoints=[],globalColors=[],globalLabels=[];
+  datasets.forEach((ds,mi)=>{ds.data.forEach((v,wi)=>{if(v!==null){globalPoints.push(v);globalColors.push(MC[mi%6]);globalLabels.push(ds.label+' S'+(wi+1));}});});
+  const mesoMaxes=datasets.map(d=>{const v=d.data.filter(x=>x!==null);return v.length?Math.max(...v):0;});
+  const ptab=S.progTab;
+
   if(S.chart){S.chart.destroy();S.chart=null;}
   if(S.chart2){S.chart2.destroy();S.chart2=null;}
 
-  if(d.ptab==='meso'){
+  if(ptab==='meso'){
     const canvas=document.getElementById('progChart');
     if(!canvas)return;
-    const maxW=Math.max(...d.datasets.map(ds=>ds.weeks));
+    const maxW=Math.max(...datasets.map(ds=>ds.weeks));
     const labels=Array.from({length:maxW},(_,i)=>'S'+(i+1));
-    const cds=d.datasets.map(ds=>{
+    const cds=datasets.map(ds=>{
       const padded=[...ds.data,...Array(maxW-ds.weeks).fill(null)];
       return{label:ds.label,data:padded,borderColor:ds.color,backgroundColor:ds.color,
         pointBackgroundColor:padded.map(v=>v!==null?ds.color:'transparent'),
@@ -449,10 +456,10 @@ function initCharts(){
   } else {
     const c1=document.getElementById('progChart');
     if(c1){
-      S.chart=new Chart(c1,{type:'line',data:{labels:d.globalLabels,datasets:[{
-        label:'Carga',data:d.globalPoints,borderColor:'rgba(180,178,169,.3)',
+      S.chart=new Chart(c1,{type:'line',data:{labels:globalLabels,datasets:[{
+        label:'Carga',data:globalPoints,borderColor:'rgba(180,178,169,.3)',
         backgroundColor:'rgba(180,178,169,.3)',borderWidth:1.5,tension:.3,showLine:true,
-        pointBackgroundColor:d.globalColors,pointBorderColor:d.globalColors,pointRadius:5,pointHoverRadius:7}]},
+        pointBackgroundColor:globalColors,pointBorderColor:globalColors,pointRadius:5,pointHoverRadius:7}]},
         options:{responsive:true,maintainAspectRatio:false,
           plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' kg'}}},
           scales:{x:{display:false},y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:v=>v+' kg'},beginAtZero:false}}}});
@@ -461,8 +468,8 @@ function initCharts(){
       const c2=document.getElementById('summaryChart');
       if(c2){
         S.chart2=new Chart(c2,{type:'bar',data:{
-          labels:d.datasets.map(ds=>ds.label),
-          datasets:[{label:'Máximo',data:d.mesoMaxes,backgroundColor:d.datasets.map(ds=>ds.color),borderRadius:3}]},
+          labels:datasets.map(ds=>ds.label),
+          datasets:[{label:'Máximo',data:mesoMaxes,backgroundColor:datasets.map(ds=>ds.color),borderRadius:3}]},
           options:{responsive:true,maintainAspectRatio:false,
             plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' kg'}}},
             scales:{x:{grid:{display:false},ticks:{color:'#888',font:{size:11}}},
