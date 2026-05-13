@@ -205,7 +205,42 @@ function parseDayBlocks(rows){
     if(!cur||r<=hRow)continue;
     const dc2=cur.dayCol;
     const name=String(rows[r][dc2]||"").trim()||String(rows[r][dc2+1]||"").trim();
-    if(!name||name.toLowerCase().startsWith("día"))continue;
+
+    // Si no hay nombre, es una fila adicional del ejercicio anterior — concatena prescripciones
+    if(!name){
+      const prev=cur.exercises[cur.exercises.length-1];
+      if(prev){
+        const hdr=rows[hRow]||[];
+        for(let c=0;c<hdr.length;c++){
+          const h=String(hdr[c]||"").trim().toLowerCase();
+          if(/^s\d+$/.test(h)){
+            const wNum=parseInt(h.replace("s",""));
+            const pres=String(rows[r][c]||"").trim();
+            if(pres&&pres!=="-"){
+              // Find existing week entry and append
+              const wi=wNum-1;
+              if(wi<prev.weeks.length&&prev.weeks[wi]&&prev.weeks[wi]!=="-"){
+                prev.weeks[wi]+=" / "+pres;
+              } else if(wi<prev.weeks.length){
+                prev.weeks[wi]=pres;
+              }
+              // Also read load if present
+              let lc=c+1;
+              for(let x=c+1;x<Math.min(c+3,hdr.length);x++){if(String(hdr[x]||"").toLowerCase().includes("carga")){lc=x;break;}}
+              const raw=rows[r][lc];
+              const val=raw!==""&&raw!==undefined&&raw!==null?String(raw).trim():"";
+              if(val&&val!=="0"){
+                const mid=String(cur.exercises.indexOf(prev)+1);
+                // store load under same exercise index
+              }
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    if(name.toLowerCase().startsWith("día"))continue;
     const hdr=rows[hRow]||[];
     const weekCols=[];
     for(let c=0;c<hdr.length;c++){
