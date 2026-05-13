@@ -461,10 +461,14 @@ function buildDatasets(){
     const exIdx=mExs.findIndex(e=>e.name===exName);
     const data=Array.from({length:nw},(_,wi)=>{
       if(exIdx<0)return null;
-      const k=mid==="1"
+      const base=mid==="1"
         ?"kg-"+S.day+"-"+(wi+1)+"-"+exIdx
         :"kg-"+S.day+"-"+(wi+1)+"-"+exIdx+"-m"+mid;
-      return parseFloat(S.store[k])||null;
+      // intenta clave simple primero, luego sub-índice 0 (doble fila)
+      const v=parseFloat(S.store[base])
+        ||parseFloat(S.store[base+"-s0"])
+        ||null;
+      return v;
     });
     return{label:"Meso "+Number(mid),data,color:MC[mi%6],weeks:nw};
   });
@@ -503,8 +507,9 @@ function render(){
   // Day nav
   html+='<div class="daynav">'+WDS.map((wd,i)=>{
     const d=DAYS[i];const act=d.id===S.day;
+    const dname=getDayName(d.id).replace(/'/g,"&#39;");
     return'<button class="dbtn'+(act?' on':'')+'" style="'+(act?'border-color:'+pc+';background:'+pc:'')+'" onclick="setDay('+d.id+')">'
-      +wd+'<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">'+getDayName(d.id)+'</span></button>';
+      +wd+'<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">'+dname+'</span></button>';
   }).join('')+'</div>';
 
   // Week nav (oculto en Progreso)
@@ -594,8 +599,8 @@ function renderProgress(exs){
   const allVals=datasets.flatMap(d=>d.data).filter(v=>v!==null);
   const hasData=allVals.length>0;
   const gMax=hasData?Math.max(...allVals):0;
-  const lastVals=datasets[datasets.length-1]?.data.filter(v=>v!==null)||[];
-  const firstVals=datasets[0]?.data.filter(v=>v!==null)||[];
+  const lastVals=(datasets.length?datasets[datasets.length-1].data:[]).filter(v=>v!==null);
+  const firstVals=(datasets.length?datasets[0].data:[]).filter(v=>v!==null);
   const lastMax=lastVals.length?Math.max(...lastVals):0;
   const firstMax=firstVals.length?Math.max(...firstVals):0;
   const pct=firstMax?Math.round(((lastMax-firstMax)/firstMax)*100):0;
