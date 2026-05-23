@@ -347,19 +347,30 @@ async function handleImport(file){
         const dayId=di+1;
         dayNames[dayId]=block.typeName||"";
         planData[dayId]=block.exercises.map((ex,ei)=>{
-          // Guardar cargas desde columna "Carga SN" si existe
+          // Cargas fila 1
           block.weekCols.forEach(wc=>{
             if(wc.loadCol<0)return;
             const raw=rows[ex.rowIdx][wc.loadCol];
             const val=(raw!==undefined&&raw!=="")
               ?String(raw).trim():"";
             if(val&&val!=="0"){
-              const k=mid==="1"
+              const base=mid==="1"
                 ?"kg-"+dayId+"-"+wc.weekNum+"-"+ei
                 :"kg-"+dayId+"-"+wc.weekNum+"-"+ei+"-m"+mid;
-              S.store[k]=val;
+              // Si hay fila 2, guardar como -s0
+              const hasDouble=ex.weeks[wc.weekNum-1]?.includes(" / ");
+              S.store[hasDouble?base+"-s0":base]=val;
             }
           });
+          // Cargas fila 2 (_extraLoads)
+          if(ex._extraLoads){
+            Object.entries(ex._extraLoads).forEach(([wn,val])=>{
+              const base=mid==="1"
+                ?"kg-"+dayId+"-"+wn+"-"+ei
+                :"kg-"+dayId+"-"+wn+"-"+ei+"-m"+mid;
+              S.store[base+"-s1"]=val;
+            });
+          }
           return{name:ex.name,details:ex.details,rest:ex.rest,weeks:ex.weeks};
         });
       });
