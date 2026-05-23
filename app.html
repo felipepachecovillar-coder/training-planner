@@ -223,7 +223,7 @@ function parseDayBlocks(rows){
   let globalMaxWeek=0;
 
   // Regex para detectar nombres de fase/sección que NO son ejercicios
-  const PHASE=/^(acumulac|intensific|descarga|taper|max.?week|pivot|acu\b|accesorios)/i;
+  const PHASE=/^(acumulac|intensific|descarga|taper|max.?week|pivot|acu\b|accesorios\b)/i;
 
   // Detectar columnas de semana en una fila cabecera
   // Retorna [{weekNum, presCol, loadCol}]
@@ -322,12 +322,11 @@ function parseDayBlocks(rows){
       continue;
     }
 
-    // ── Ignorar filas de fase/sección ────────────────────────────────────
+    // ── Ignorar filas de fase/sección (ANTES del check de datos) ─────────
     if(PHASE.test(name))continue;
     if(/^[Dd][íi]a\s*\d/i.test(name))continue;
 
-    // ── Ignorar solo si parece fila huérfana de descanso ────────────────
-    // (nombre que parece tiempo Y sin datos en ninguna semana)
+    // ── Ignorar si ninguna semana tiene dato Y parece descanso huérfano ──
     const hasData=cur.weekCols.some(({presCol})=>{
       const v=String(rows[r][presCol]||"").trim();
       return v&&v!=="-";
