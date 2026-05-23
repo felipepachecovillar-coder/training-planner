@@ -194,12 +194,14 @@ function doneKey(d,w){return"done-"+d+"-"+w+"-m"+S.meso;}
 function dnameKey(d){return"dayname-"+S.meso+"-"+d;}
 function getDayName(d){
   const c=S.store[dnameKey(d)];if(c)return c;
-  const m=S.mesoMeta[S.meso];if(m?.dayNames?.[d])return m.dayNames[d];
+  const m=S.mesoMeta[S.meso];
+  if(m?.dayNames?.[d])return m.dayNames[d];
   return DEFAULT_DAYNAMES[d-1]||"";
 }
 function getDayNameForMeso(d,mid){
   const c=S.store["dayname-"+mid+"-"+d];if(c)return c;
-  const m=S.mesoMeta[mid];if(m?.dayNames?.[d])return m.dayNames[d];
+  const m=S.mesoMeta[mid];
+  if(m?.dayNames?.[d])return m.dayNames[d];
   return DEFAULT_DAYNAMES[d-1]||"";
 }
 
@@ -221,7 +223,7 @@ function parseDayBlocks(rows){
   let globalMaxWeek=0;
 
   // Regex para detectar nombres de fase/sección que NO son ejercicios
-  const PHASE=/^(acumulac|intensific|descarga|taper|max.?week|pivot|acu\b|accesorios)/i;
+  const PHASE=/^(acumulac|intensific|descarga|taper|max.?week|pivot|acu\b)/i;
 
   // Detectar columnas de semana en una fila cabecera
   // Retorna [{weekNum, presCol, loadCol}]
@@ -236,12 +238,17 @@ function parseDayBlocks(rows){
       // Buscar "carga" inmediatamente a la derecha
       let lc=-1;
       for(let x=c+1;x<=c+2&&x<hdr.length;x++){
-        if(/carga/i.test(String(hdr[x]||""))) {lc=x;break;}
+        if(/carga/i.test(String(hdr[x]||""))){lc=x;break;}
       }
       cols.push({weekNum:wNum,presCol:c,loadCol:lc});
     }
+    // Formato "Semana 1" sin columna Carga — igual válido, loadCol=-1
     return cols;
   }
+
+  // Para Meso 1: cabecera tiene "Semana 1" en col 6, "S2" en col 7...
+  // pero el nombre del tipo de día está en col 0 de la cabecera (ej. "Pierna")
+  // y nameCol=0. Los datos de cada semana = lo ejecutado (prescripción histórica).
 
   for(let r=0;r<rows.length;r++){
     const row=rows[r]||[];
@@ -319,12 +326,14 @@ function parseDayBlocks(rows){
     if(PHASE.test(name))continue;
     if(/^[Dd][íi]a\s*\d/i.test(name))continue;
 
-    // ── Ignorar si ninguna semana tiene dato (fila huérfana de descanso) ─
+    // ── Ignorar si ninguna semana tiene dato Y el nombre parece descanso ─
+    // (pero NO ignorar si el formato no tiene weekCols con datos — Meso 1)
     const hasData=cur.weekCols.some(({presCol})=>{
       const v=String(rows[r][presCol]||"").trim();
       return v&&v!=="-";
     });
-    if(!hasData)continue;
+    // Solo ignorar si no hay datos Y parece valor de descanso/detalle huérfano
+    if(!hasData&&/^\d[\d\s\-a-z]*(seg|min)\.?$/i.test(name))continue;
 
     // ── Construir semanas ─────────────────────────────────────────────────
     const nw=Math.max(globalMaxWeek,cur.weekCols.length,5);
