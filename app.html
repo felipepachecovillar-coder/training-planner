@@ -326,14 +326,13 @@ function parseDayBlocks(rows){
     if(PHASE.test(name))continue;
     if(/^[Dd][íi]a\s*\d/i.test(name))continue;
 
-    // ── Ignorar si ninguna semana tiene dato Y el nombre parece descanso ─
-    // (pero NO ignorar si el formato no tiene weekCols con datos — Meso 1)
+    // ── Ignorar solo si parece fila huérfana de descanso ────────────────
+    // (nombre que parece tiempo Y sin datos en ninguna semana)
     const hasData=cur.weekCols.some(({presCol})=>{
       const v=String(rows[r][presCol]||"").trim();
       return v&&v!=="-";
     });
-    // Solo ignorar si no hay datos Y parece valor de descanso/detalle huérfano
-    if(!hasData&&/^\d[\d\s\-a-z]*(seg|min)\.?$/i.test(name))continue;
+    if(!hasData&&/^\d[\d\s\-]*(?:seg|min)\.?$/i.test(name))continue;
 
     // ── Construir semanas ─────────────────────────────────────────────────
     const nw=Math.max(globalMaxWeek,cur.weekCols.length,5);
@@ -374,7 +373,7 @@ async function handleImport(file){
       const planData={},dayNames={};
       blocks.forEach((block,bi)=>{
         const dayId=bi+1;
-        dayNames[dayId]=block.typeName||"";
+        dayNames[dayId]=block.typeName||DEFAULT_DAYNAMES[bi]||"";
         planData[dayId]=block.exercises.map((ex,ei)=>{
           // Guardar cargas fila 1
           ex.weekCols.forEach(({weekNum,loadCol})=>{
