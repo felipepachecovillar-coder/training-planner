@@ -223,7 +223,7 @@ function parseDayBlocks(rows){
   let globalMaxWeek=0;
 
   // Regex para detectar nombres de fase/sección que NO son ejercicios
-  const PHASE=/^(acumulac|intensific|descarga|taper|max.?week|pivot|acu\b)/i;
+  const PHASE=/^(acumulac|intensific|descarga|taper|max.?week|pivot|acu\b|accesorios)/i;
 
   // Detectar columnas de semana en una fila cabecera
   // Retorna [{weekNum, presCol, loadCol}]
