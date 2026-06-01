@@ -6,6 +6,8 @@
 <title>Training Planner — Felipe v8</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://apis.google.com/js/api.js" defer></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f5f3;color:#1a1a1a;min-height:100vh}
@@ -153,19 +155,31 @@ window.S={
 // ── Local + Cloud persistence ─────────────────────────────────────────────────
 function loadLocal(){try{const r=localStorage.getItem(SK);if(r)S.store=JSON.parse(r);}catch{}}
 function saveLocal(){try{localStorage.setItem(SK,JSON.stringify(S.store));}catch{}}
+let _pendingFsPut=null;
 function saveStore(){
   saveLocal();
-  const p={};
-  for(const[k,v]of Object.entries(S.store))
-    if(k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||
-       k.startsWith("dayname-")||k.startsWith("_meso"))p[k]=v;
-  if(Object.keys(p).length)fsPut(p);
+  if(_pendingFsPut)clearTimeout(_pendingFsPut);
+  _pendingFsPut=setTimeout(()=>{
+    _pendingFsPut=null;
+    const p={};
+    for(const[k,v]of Object.entries(S.store))
+      if(k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||
+         k.startsWith("dayname-")||k.startsWith("_meso"))p[k]=v;
+    if(Object.keys(p).length)fsPut(p);
+  },1500);
 }
 function applyCloud(data){
   S.store={...S.store,...data};
   saveLocal();
-  if(data["_mesoList"])try{S.mesoList=JSON.parse(data["_mesoList"]);S.meso=S.mesoList[S.mesoList.length-1];}catch{}
-  if(data["_mesoMeta"])try{S.mesoMeta=JSON.parse(data["_mesoMeta"]);const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}catch{}
+  if(data["_mesoList"])try{
+    S.mesoList=JSON.parse(data["_mesoList"]);
+    if(!S.mesoList.includes(S.meso))S.meso=S.mesoList[S.mesoList.length-1];
+  }catch{}
+  if(data["_mesoMeta"])try{
+    S.mesoMeta=JSON.parse(data["_mesoMeta"]);
+    const m=S.mesoMeta[S.meso];
+    if(m?.planData)S.plan=m.planData;
+  }catch{}
   if(data["_mesoWeeks"])try{S.mesoWeeks=JSON.parse(data["_mesoWeeks"]);}catch{}
 }
 function updateSyncIcon(){
@@ -178,10 +192,17 @@ async function syncCloud(){
   if(S.syncing)return;
   S.syncing=true;S.syncStatus="syncing";updateSyncIcon();
   const data=await fsGet();
-  if(data&&Object.keys(data).length>0){applyCloud(data);S.syncStatus="ok";}
+  let changed=false;
+  if(data&&Object.keys(data).length>0){
+    const before=JSON.stringify(S.store);
+    applyCloud(data);
+    if(JSON.stringify(S.store)!==before)changed=true;
+    S.syncStatus="ok";
+  }
   else if(data!==null){const p={};for(const[k,v]of Object.entries(S.store))p[k]=v;if(Object.keys(p).length)await fsPut(p);S.syncStatus="ok";}
   else S.syncStatus="error";
-  S.syncing=false;render();
+  S.syncing=false;
+  if(changed)render();else updateSyncIcon();
 }
 
 // ── Keys ──────────────────────────────────────────────────────────────────────
@@ -602,6 +623,7 @@ function render(){
 
 // ── Progress view ─────────────────────────────────────────────────────────────
 function renderProgress(exs){
+  if(S.progEx>=exs.length)S.progEx=0;
   const datasets=buildDatasets();
   const allVals=datasets.flatMap(d=>d.data).filter(v=>v!==null);
   const hasData=allVals.length>0;
@@ -717,10 +739,13 @@ function renderSync(){
   const isOk=msg.startsWith("ok:");
   const txt=msg.replace(/^(ok|err):/,"");
   return'<div style="padding:1.25rem 16px">'
-    +'<input id="fileIn" type="file" accept=".xlsx,.xls" style="display:none" onchange="onFile(this)">'
+    +'<input id="fileIn" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0" onchange="onFile(this)">'
     +'<div class="syncard"><h3>1. Importar planilla del entrenador</h3>'
-    +'<p>Sube el .xlsx que te envía cada domingo.</p>'
-    +'<button style="padding:8px 18px;border-radius:8px;border:.5px solid #ccc;background:transparent;font-size:13px;cursor:pointer" onclick="document.getElementById(\'fileIn\').click()">Subir archivo .xlsx</button></div>'
+    +'<p>Sube el .xlsx que te envía cada domingo, o conéctate a tu Drive.</p>'
+    +'<label for="fileIn" style="display:inline-block;padding:8px 18px;border-radius:8px;border:.5px solid #ccc;background:transparent;font-size:13px;cursor:pointer;margin-right:8px">Subir archivo .xlsx</label>'
+    +'<button onclick="openGoogleDrive()" style="padding:8px 18px;border-radius:8px;border:none;background:#378ADD;color:#fff;font-size:13px;font-weight:500;cursor:pointer">Importar desde Google Drive</button>'
+    +(!_driveConfigured()?'<p style="margin-top:10px;font-size:11px;color:#a32d2d;line-height:1.5">⚠ Google Drive aún no configurado. Edita GOOGLE_CLIENT_ID en el código (ver instrucciones de SETUP).</p>':'')
+    +'</div>'
     +'<div class="syncard"><h3>2. Exportar cargas al entrenador</h3>'
     +'<p>Genera un .xlsx con todas tus cargas. Siempre disponible.</p>'
     +'<button style="padding:8px 18px;border-radius:8px;border:none;color:#fff;font-size:13px;font-weight:500;cursor:pointer;background:#378ADD" onclick="handleExport()">Descargar .xlsx con cargas</button></div>'
@@ -744,6 +769,97 @@ function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
 function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
 function setProgTab(t){S.progTab=t;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
 function onFile(input){if(input.files[0])handleImport(input.files[0]);}
+
+// ── Google Drive (Picker + Drive API v3) ──────────────────────────────────────
+// SETUP (una vez):
+//  1) Google Cloud Console → mismo proyecto Firebase → APIs & Services → Library
+//     Habilita: "Google Drive API" y "Google Picker API"
+//  2) APIs & Services → Credentials → Create OAuth 2.0 Client ID (Web application)
+//     Authorized JavaScript origins: https://felipepachecovillar-coder.github.io
+//     Copia el Client ID y pégalo en GOOGLE_CLIENT_ID abajo.
+//  3) Si tu API key tiene "API restrictions", añade Drive API y Picker API.
+const GOOGLE_CLIENT_ID="REEMPLAZAR_CON_TU_CLIENT_ID.apps.googleusercontent.com";
+const GOOGLE_API_KEY=FB_KEY;
+const DRIVE_SCOPE="https://www.googleapis.com/auth/drive.readonly";
+let _tokenClient=null,_accessToken=null,_pickerLoaded=false;
+
+function _driveConfigured(){return !GOOGLE_CLIENT_ID.startsWith("REEMPLAZAR");}
+
+function _initTokenClient(){
+  if(_tokenClient)return _tokenClient;
+  if(!(window.google&&google.accounts&&google.accounts.oauth2))return null;
+  _tokenClient=google.accounts.oauth2.initTokenClient({
+    client_id:GOOGLE_CLIENT_ID,scope:DRIVE_SCOPE,callback:()=>{}
+  });
+  return _tokenClient;
+}
+
+function _loadPicker(){
+  return new Promise((resolve,reject)=>{
+    if(_pickerLoaded)return resolve();
+    if(!window.gapi)return reject(new Error("gapi no disponible"));
+    gapi.load("picker",{callback:()=>{_pickerLoaded=true;resolve();},onerror:()=>reject(new Error("No se pudo cargar Picker"))});
+  });
+}
+
+async function openGoogleDrive(){
+  if(!_driveConfigured()){
+    S.importMsg="err:Falta configurar GOOGLE_CLIENT_ID en el código (ver instrucciones en el SETUP).";
+    render();return;
+  }
+  const tc=_initTokenClient();
+  if(!tc){
+    S.importMsg="err:Google Identity Services aún no cargó. Espera un segundo y reintenta.";
+    render();return;
+  }
+  tc.callback=async resp=>{
+    if(resp.error){S.importMsg="err:Autenticación: "+(resp.error_description||resp.error);render();return;}
+    _accessToken=resp.access_token;
+    try{await _loadPicker();_showDrivePicker();}
+    catch(e){S.importMsg="err:"+e.message;render();}
+  };
+  tc.requestAccessToken({prompt:_accessToken?"":"consent"});
+}
+
+function _showDrivePicker(){
+  const mimes=[
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "application/vnd.google-apps.spreadsheet"
+  ].join(",");
+  const view=new google.picker.DocsView(google.picker.ViewId.DOCS)
+    .setMimeTypes(mimes).setIncludeFolders(true).setSelectFolderEnabled(false);
+  new google.picker.PickerBuilder()
+    .addView(view)
+    .setOAuthToken(_accessToken)
+    .setDeveloperKey(GOOGLE_API_KEY)
+    .setCallback(_pickerCallback)
+    .setTitle("Selecciona tu planilla")
+    .build()
+    .setVisible(true);
+}
+
+async function _pickerCallback(data){
+  if(!data||data.action!==google.picker.Action.PICKED)return;
+  const doc=data.docs&&data.docs[0];
+  if(!doc)return;
+  S.importMsg="ok:Descargando "+doc.name+"…";render();
+  try{
+    let url,fname=doc.name||"importado.xlsx";
+    if(doc.mimeType==="application/vnd.google-apps.spreadsheet"){
+      url="https://www.googleapis.com/drive/v3/files/"+doc.id
+        +"/export?mimeType="+encodeURIComponent("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      if(!/\.xlsx?$/i.test(fname))fname+=".xlsx";
+    }else{
+      url="https://www.googleapis.com/drive/v3/files/"+doc.id+"?alt=media";
+    }
+    const r=await fetch(url,{headers:{Authorization:"Bearer "+_accessToken}});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const blob=await r.blob();
+    const file=new File([blob],fname,{type:blob.type||"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    await handleImport(file);
+  }catch(e){S.importMsg="err:Descarga: "+e.message;render();}
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 loadLocal();
