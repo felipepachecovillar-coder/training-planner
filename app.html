@@ -873,8 +873,10 @@ function _showDrivePicker(){
   ].join(",");
   const view=new google.picker.DocsView(google.picker.ViewId.DOCS)
     .setMimeTypes(mimes).setIncludeFolders(true).setSelectFolderEnabled(false);
+  const appId=GOOGLE_CLIENT_ID.split("-")[0]; // nro de proyecto: requerido con scope drive.file
   new google.picker.PickerBuilder()
     .addView(view)
+    .setAppId(appId)
     .setOAuthToken(_accessToken)
     .setDeveloperKey(GOOGLE_API_KEY)
     .setCallback(_pickerCallback)
