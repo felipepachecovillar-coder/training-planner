@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v8</title>
+<title>Training Planner — Felipe v9</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -61,6 +61,24 @@ const ALL_WEEKS=Array.from({length:10},(_,i)=>({
 }));
 const WDS=["Lunes","Martes","Miércoles","Jueves","Viernes"];
 const DEFAULT_DAYNAMES=["Upper Body","Lower A","Upper Push","Upper Pull","Lower B"];
+
+// Helpers
+const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+// parseFloat tolerante a coma decimal ("82,5" → 82.5). Retorna null si no es número.
+const num=v=>{const n=parseFloat(String(v??"").trim().replace(",","."));return isNaN(n)?null:n;};
+// Semanas dinámicas: respeta el patrón de 10 para nw<=10, extiende sin crashear para más
+function weeksFor(nw){
+  return Array.from({length:nw},(_,i)=>({
+    id:i+1,label:"S"+(i+1),
+    phase:i<10?ALL_WEEKS[i].phase:"Intensificación"
+  }));
+}
+// Un done- es verdadero solo si no es "false" (legado de sync que serializaba booleanos)
+const isDoneVal=v=>!!v&&v!=="false";
+function normStore(){
+  for(const k of Object.keys(S.store))
+    if(k.startsWith("done-")&&(S.store[k]===false||S.store[k]==="false"))delete S.store[k];
+}
 
 // ── Firebase ──────────────────────────────────────────────────────────────────
 const FB_KEY="AIzaSyBNbsNgAfulHQ8VVEurpaLZgB1nfgrYYoM";
@@ -163,9 +181,7 @@ function saveStore(){
   _pendingFsPut=setTimeout(()=>{
     _pendingFsPut=null;
     const p={};
-    for(const[k,v]of Object.entries(S.store))
-      if(k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||
-         k.startsWith("dayname-")||k.startsWith("_meso")||k==="_driveFile")p[k]=v;
+    for(const[k,v]of Object.entries(S.store))if(SYNC_PREFIX(k))p[k]=v;
     if(Object.keys(p).length)fsPut(p);
   },1500);
   _scheduleDriveUpload();
@@ -191,18 +207,22 @@ function updateSyncIcon(){
   el.textContent=S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻";
   el.style.color=S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888";
 }
+const SYNC_PREFIX=k=>k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||k.startsWith("dayname-")||k.startsWith("_meso")||k==="_driveFile";
 async function syncCloud(){
   if(S.syncing)return;
+  // Hay ediciones locales esperando push (debounce): no aplicar nube para no pisarlas
+  if(_pendingFsPut){updateSyncIcon();return;}
   S.syncing=true;S.syncStatus="syncing";updateSyncIcon();
   const data=await fsGet();
   let changed=false;
   if(data&&Object.keys(data).length>0){
     const before=JSON.stringify(S.store);
     applyCloud(data);
+    normStore();
     if(JSON.stringify(S.store)!==before)changed=true;
     S.syncStatus="ok";
   }
-  else if(data!==null){const p={};for(const[k,v]of Object.entries(S.store))p[k]=v;if(Object.keys(p).length)await fsPut(p);S.syncStatus="ok";}
+  else if(data!==null){const p={};for(const[k,v]of Object.entries(S.store))if(SYNC_PREFIX(k))p[k]=v;if(Object.keys(p).length)await fsPut(p);S.syncStatus="ok";}
   else S.syncStatus="error";
   S.syncing=false;
   if(changed)render();else updateSyncIcon();
@@ -305,13 +325,17 @@ function parseDayBlocks(rows){
         }
       }
 
-      // Columnas auxiliares en cabecera
+      // Columnas auxiliares en cabecera (fallback a fila 0 del sheet para exports antiguos)
       let restCol=-1, detailsCol=-1;
-      for(let c=0;c<hdr.length;c++){
-        const h=String(hdr[c]||"").trim().toLowerCase();
-        if(restCol<0&&(h==="descanso"||h==="desc."))restCol=c;
-        if(detailsCol<0&&h==="detalles")detailsCol=c;
-      }
+      const scanHdr=h=>{
+        for(let c=0;c<h.length;c++){
+          const t=String(h[c]||"").trim().toLowerCase();
+          if(restCol<0&&(t==="descanso"||t==="desc."))restCol=c;
+          if(detailsCol<0&&t==="detalles")detailsCol=c;
+        }
+      };
+      scanHdr(hdr);
+      if(restCol<0||detailsCol<0)scanHdr(rows[0]||[]);
 
       cur={label:diaVal,typeName,nameCol:diaCol,
            headerRow:r+1,weekCols,restCol,detailsCol,exercises:[]};
@@ -323,10 +347,10 @@ function parseDayBlocks(rows){
 
     const name=String(rows[r][cur.nameCol]||"").trim();
 
-    // ── Fila vacía en nameCol → concatenar al ejercicio anterior ─────────
-    if(!name){
+    // Concatenar una fila de continuación (fila doble) al último ejercicio
+    const mergeCont=()=>{
       const prev=cur.exercises[cur.exercises.length-1];
-      if(!prev)continue;
+      if(!prev)return;
       cur.weekCols.forEach(({weekNum,presCol,loadCol})=>{
         const wi=weekNum-1;
         if(wi>=prev.weeks.length)return;
@@ -343,19 +367,29 @@ function parseDayBlocks(rows){
           }
         }
       });
-      continue;
-    }
+    };
+
+    // ── Fila vacía en nameCol → concatenar al ejercicio anterior ─────────
+    if(!name){mergeCont();continue;}
 
     // ── Ignorar filas de fase/sección (ANTES del check de datos) ─────────
     if(PHASE.test(name))continue;
     if(/^[Dd][íi]a\s*\d/i.test(name))continue;
 
-    // ── Ignorar si ninguna semana tiene dato Y parece descanso huérfano ──
     const hasData=cur.weekCols.some(({presCol})=>{
       const v=String(rows[r][presCol]||"").trim();
       return v&&v!=="-";
     });
-    if(!hasData&&/^\d[\d\s\-]*(?:seg|min)\.?$/i.test(name))continue;
+
+    // ── Fila cuyo nameCol es un descanso (ej. "3min", "90 seg") ──────────
+    const looksRest=/^\d[\d\s\-–,.]*\s*(seg|min)s?\.?$/i.test(name);
+    if(looksRest){
+      // Con datos en semanas → es la 2ª fila de un ejercicio doble: concatenar
+      if(hasData&&cur.exercises.length){mergeCont();continue;}
+      // Sin datos → descanso huérfano: ignorar
+      if(!hasData)continue;
+    }
+    // Sin datos en ninguna semana y no es descanso: dejar pasar (comportamiento previo)
 
     // ── Construir semanas ─────────────────────────────────────────────────
     const nw=Math.max(globalMaxWeek,cur.weekCols.length,5);
@@ -457,7 +491,7 @@ function buildWorkbook(){
       const dayRow=["Día "+d,getDayNameForMeso(d,mid)];
       for(let w=1;w<=nw;w++)dayRow.push("","");
       wsData.push(dayRow);
-      const subHdr=["","",""];
+      const subHdr=["","Detalles","Descanso"];
       for(let w=1;w<=nw;w++)subHdr.push("S"+w,"Carga S"+w);
       wsData.push(subHdr);
       exs.forEach((ex,ei)=>{
@@ -510,7 +544,8 @@ function buildDatasets(){
       const base=mid==="1"
         ?"kg-"+S.day+"-"+(wi+1)+"-"+exIdx
         :"kg-"+S.day+"-"+(wi+1)+"-"+exIdx+"-m"+mid;
-      return parseFloat(S.store[base])||parseFloat(S.store[base+"-s0"])||null;
+      const v1=num(S.store[base]);
+      return v1!==null&&v1!==0?v1:(num(S.store[base+"-s0"])??null);
     });
     return{label:"Meso "+Number(mid),data,color:MC[mi%6],weeks:nw};
   });
@@ -519,12 +554,12 @@ function buildDatasets(){
 // ── Render ────────────────────────────────────────────────────────────────────
 function render(){
   const nw=S.mesoWeeks[S.meso]||5;
-  const WEEKS=ALL_WEEKS.slice(0,nw);
+  const WEEKS=weeksFor(nw);
   if(S.week>nw)S.week=nw;
   const wk=WEEKS[S.week-1];
-  const pc=PC[wk.phase];
+  const pc=PC[wk.phase]||"#378ADD";
   const exs=S.plan[S.day]||[];
-  const isDone=!!S.store[doneKey(S.day,S.week)];
+  const isDone=isDoneVal(S.store[doneKey(S.day,S.week)]);
   const v=S.view;
 
   let html='<div class="hdr">'
@@ -557,7 +592,7 @@ function render(){
   // Week nav
   if(v!=="progress"){
     html+='<div class="wknav">'+WEEKS.map(w=>{
-      const wpc=PC[w.phase];const done=!!S.store[doneKey(S.day,w.id)];const act=w.id===S.week;
+      const wpc=PC[w.phase]||"#378ADD";const done=isDoneVal(S.store[doneKey(S.day,w.id)]);const act=w.id===S.week;
       return'<button class="wkbtn" style="border-color:'+(act?wpc:'#e0dfd8')
         +';background:'+(act?wpc:done?wpc+'25':'transparent')
         +';color:'+(act?'#fff':done?wpc:'#888')
@@ -595,7 +630,7 @@ function render(){
         if(isMulti){
           parts.forEach((p,si)=>{
             const val=S.store[kgKey(S.day,S.week,i,si)]||"";
-            expHtml+='<div><label>'+p+' — kg</label>'
+            expHtml+='<div><label>'+esc(p)+' — kg</label>'
               +'<input type="number" value="'+val+'" placeholder="0" style="width:80px" '
               +'oninput="updKg('+S.day+','+S.week+','+i+',this.value,'+si+')"></div>';
           });
@@ -612,11 +647,11 @@ function render(){
       }
 
       return'<div class="exrow">'
-        +'<div class="exmain'+(skip?' skip':'')+(isExp?' exp':'')+'" onclick="'+(skip?'':'toggleEx('+i+')')+'"><span style="width:38%;font-size:13px">'+ex.name+'</span>'
-        +'<span style="width:16%;font-size:11px;color:#888">'+(ex.details||'—')+'</span>'
-        +'<span style="width:12%;font-size:11px;color:#888">'+(ex.rest||'—')+'</span>'
-        +'<span style="width:20%;font-size:13px;font-weight:500;color:'+(skip?'#888':pc)+'">'+(skip?'—':pres)+'</span>'
-        +'<span style="width:14%;font-size:12px">'+(kgDisplay?'<span style="color:'+pc+';font-weight:500">'+kgDisplay+' kg</span>':'<span style="color:#ccc">—</span>')+'</span></div>'
+        +'<div class="exmain'+(skip?' skip':'')+(isExp?' exp':'')+'" onclick="'+(skip?'':'toggleEx('+i+')')+'"><span style="width:38%;font-size:13px">'+esc(ex.name)+'</span>'
+        +'<span style="width:16%;font-size:11px;color:#888">'+esc(ex.details||'—')+'</span>'
+        +'<span style="width:12%;font-size:11px;color:#888">'+esc(ex.rest||'—')+'</span>'
+        +'<span style="width:20%;font-size:13px;font-weight:500;color:'+(skip?'#888':pc)+'">'+(skip?'—':esc(pres))+'</span>'
+        +'<span style="width:14%;font-size:12px">'+(kgDisplay?'<span style="color:'+pc+';font-weight:500">'+esc(kgDisplay)+' kg</span>':'<span style="color:#ccc">—</span>')+'</span></div>'
         +expHtml+'</div>';
     }).join('');
 
@@ -650,7 +685,7 @@ function renderProgress(exs){
 
   let h='<div style="padding:1rem">';
   h+='<select style="width:100%;padding:6px 10px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:13px;margin-bottom:.75rem" onchange="setProgEx(this.value)">'
-    +exs.map((ex,i)=>'<option value="'+i+'"'+(i===S.progEx?' selected':'')+'>'+ex.name+'</option>').join('')+'</select>';
+    +exs.map((ex,i)=>'<option value="'+i+'"'+(i===S.progEx?' selected':'')+'>'+esc(ex.name)+'</option>').join('')+'</select>';
   h+='<div class="ptabs">'
     +'<button class="ptab" onclick="setProgTab(\'meso\')" style="border-bottom:'+(ptab==='meso'?'2px solid #378ADD':'2px solid transparent')+';color:'+(ptab==='meso'?'#378ADD':'#888')+';font-weight:'+(ptab==='meso'?500:400)+'">Por mesociclo</button>'
     +'<button class="ptab" onclick="setProgTab(\'global\')" style="border-bottom:'+(ptab==='global'?'2px solid #378ADD':'2px solid transparent')+';color:'+(ptab==='global'?'#378ADD':'#888')+';font-weight:'+(ptab==='global'?500:400)+'">Global histórico</button>'
@@ -773,7 +808,7 @@ function setMeso(m){S.meso=m;const mm=S.mesoMeta[m];if(mm?.planData)S.plan=mm.pl
 function toggleEx(i){S.exp=S.exp===i?null:i;render();}
 function updKg(d,w,i,v,si){S.store[kgKey(d,w,i,si)]=v;saveStore();}
 function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();}
-function toggleDone(d,w){const k=doneKey(d,w);S.store[k]=!S.store[k];saveStore();render();}
+function toggleDone(d,w){const k=doneKey(d,w);if(isDoneVal(S.store[k]))delete S.store[k];else S.store[k]="1";saveStore();render();}
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
 function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
 function setProgTab(t){S.progTab=t;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
@@ -935,6 +970,7 @@ async function _pickerCallback(data){
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 loadLocal();
+normStore();
 if(S.store["_mesoList"])try{S.mesoList=JSON.parse(S.store["_mesoList"]);S.meso=S.mesoList[S.mesoList.length-1];}catch{}
 if(S.store["_mesoMeta"])try{S.mesoMeta=JSON.parse(S.store["_mesoMeta"]);const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}catch{}
 if(S.store["_mesoWeeks"])try{S.mesoWeeks=JSON.parse(S.store["_mesoWeeks"]);}catch{}
