@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v9</title>
+<title>Training Planner — Felipe v9.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -168,7 +168,8 @@ window.S={
   store:{},importMsg:"",
   progEx:0,progTab:"meso",chart:null,chart2:null,
   syncStatus:"idle",syncing:false,
-  driveFile:null,driveStatus:"idle"
+  driveFile:null,driveStatus:"idle",
+  askStart:false,startMeso:null
 };
 
 // ── Local + Cloud persistence ─────────────────────────────────────────────────
@@ -551,8 +552,58 @@ function buildDatasets(){
   });
 }
 
+// ── Pantalla inicial: ¿en qué semana estás? ───────────────────────────────────
+function _lastPos(){
+  try{const p=JSON.parse(S.store["_lastPos"]||"{}");return{meso:p.meso||"",week:+p.week||0};}
+  catch{return{meso:"",week:0};}
+}
+function _savePos(){S.store["_lastPos"]=JSON.stringify({meso:S.meso,week:S.week});saveLocal();}
+function startSelMeso(m){S.startMeso=m;render();}
+
+function chooseStart(mid,w){
+  if(mid&&S.mesoList.includes(mid)){
+    S.meso=mid;
+    const mm=S.mesoMeta[mid];
+    if(mm?.planData)S.plan=mm.planData;
+  }
+  if(w)S.week=Math.min(w,S.mesoWeeks[S.meso]||5);
+  // Día según el día de la semana actual (Lun–Vie); fin de semana → Lunes
+  const wd=new Date().getDay();
+  let d=(wd>=1&&wd<=5)?wd:1;
+  if(!S.plan[d]){const ks=Object.keys(S.plan);if(ks.length)d=+ks[0];}
+  S.day=d;S.view="workout";S.exp=null;S.askStart=false;
+  _savePos();render();
+}
+
+function renderStart(){
+  const lp=_lastPos();
+  const mid=S.startMeso||(S.mesoList.includes(lp.meso)?lp.meso:S.mesoList[S.mesoList.length-1]);
+  const nw=S.mesoWeeks[mid]||5;
+  const WEEKS=weeksFor(nw);
+  const last=S.mesoList[S.mesoList.length-1];
+  return '<div style="max-width:520px;margin:0 auto;padding:2.5rem 16px">'
+    +'<h2 style="font-size:20px;margin:0 0 4px">¿En qué semana estás?</h2>'
+    +'<p style="color:#888;font-size:13px;margin:0 0 18px">Elige el mesociclo y la semana para ir directo al entrenamiento.</p>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">'
+    +S.mesoList.map(m=>'<button onclick="startSelMeso(&quot;'+m+'&quot;)" style="padding:6px 14px;border-radius:16px;font-size:12px;cursor:pointer;border:1px solid '+(m===mid?'#378ADD':'#ccc')+';background:'+(m===mid?'#378ADD':'transparent')+';color:'+(m===mid?'#fff':'#555')+'">Meso '+Number(m)+(m===last?' ★':'')+'</button>').join('')
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">'
+    +WEEKS.map(w=>{
+      const c=PC[w.phase]||"#378ADD";
+      const sel=(mid===lp.meso&&w.id===lp.week);
+      return '<button onclick="chooseStart(&quot;'+mid+'&quot;,'+w.id+')" title="'+w.phase+'" '
+        +'style="padding:14px 0;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;'
+        +'border:'+(sel?'2px solid '+c:'1px solid #ddd')+';background:'+c+'18;color:'+c+'">'
+        +w.label+'</button>';
+    }).join('')
+    +'</div>'
+    +'<div style="margin-top:16px;text-align:center"><a href="#" onclick="chooseStart(null,null);return false" style="font-size:12px;color:#888">Omitir</a></div>'
+    +'</div>';
+}
+
 // ── Render ────────────────────────────────────────────────────────────────────
 function render(){
+  if(S.askStart&&S.mesoList.length){document.getElementById("app").innerHTML=renderStart();return;}
   const nw=S.mesoWeeks[S.meso]||5;
   const WEEKS=weeksFor(nw);
   if(S.week>nw)S.week=nw;
@@ -783,10 +834,8 @@ function renderSync(){
   const isOk=msg.startsWith("ok:");
   const txt=msg.replace(/^(ok|err):/,"");
   return'<div style="padding:1.25rem 16px">'
-    +'<input id="fileIn" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0" onchange="onFile(this)">'
     +'<div class="syncard"><h3>1. Importar planilla del entrenador</h3>'
-    +'<p>Sube el .xlsx que te envía cada domingo, o conéctate a tu Drive.</p>'
-    +'<label for="fileIn" style="display:inline-block;padding:8px 18px;border-radius:8px;border:.5px solid #ccc;background:transparent;font-size:13px;cursor:pointer;margin-right:8px">Subir archivo .xlsx</label>'
+    +'<p>Conéctate a tu Drive y elige la planilla que te envía tu entrenador.</p>'
     +'<button onclick="openGoogleDrive()" style="padding:8px 18px;border-radius:8px;border:none;background:#378ADD;color:#fff;font-size:13px;font-weight:500;cursor:pointer">Importar desde Google Drive</button>'
     +(!_driveConfigured()?'<p style="margin-top:10px;font-size:11px;color:#a32d2d;line-height:1.5">⚠ Google Drive aún no configurado. Edita GOOGLE_CLIENT_ID en el código (ver instrucciones de SETUP).</p>':'')
     +'</div>'
@@ -803,8 +852,8 @@ function renderSync(){
 // ── Handlers ──────────────────────────────────────────────────────────────────
 function setView(v){S.view=v;S.importMsg="";if(S.chart&&v!=="progress"){S.chart.destroy();S.chart=null;}if(S.chart2&&v!=="progress"){S.chart2.destroy();S.chart2=null;}render();}
 function setDay(d){S.day=d;S.exp=null;render();}
-function setWeek(w){S.week=w;S.exp=null;render();}
-function setMeso(m){S.meso=m;const mm=S.mesoMeta[m];if(mm?.planData)S.plan=mm.planData;S.exp=null;render();}
+function setWeek(w){S.week=w;S.exp=null;_savePos();render();}
+function setMeso(m){S.meso=m;const mm=S.mesoMeta[m];if(mm?.planData)S.plan=mm.planData;S.exp=null;_savePos();render();}
 function toggleEx(i){S.exp=S.exp===i?null:i;render();}
 function updKg(d,w,i,v,si){S.store[kgKey(d,w,i,si)]=v;saveStore();}
 function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();}
@@ -812,7 +861,6 @@ function toggleDone(d,w){const k=doneKey(d,w);if(isDoneVal(S.store[k]))delete S.
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
 function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
 function setProgTab(t){S.progTab=t;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
-function onFile(input){if(input.files[0])handleImport(input.files[0]);}
 
 // ── Google Drive (Picker + Drive API v3) ──────────────────────────────────────
 // SETUP (una vez):
@@ -977,6 +1025,12 @@ if(S.store["_mesoList"])try{S.mesoList=JSON.parse(S.store["_mesoList"]);S.meso=S
 if(S.store["_mesoMeta"])try{S.mesoMeta=JSON.parse(S.store["_mesoMeta"]);const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}catch{}
 if(S.store["_mesoWeeks"])try{S.mesoWeeks=JSON.parse(S.store["_mesoWeeks"]);}catch{}
 if(S.store["_driveFile"])try{S.driveFile=JSON.parse(S.store["_driveFile"]);}catch{}
+if(S.store["_lastPos"])try{
+  const p=JSON.parse(S.store["_lastPos"]);
+  if(S.mesoList.includes(p.meso)){S.meso=p.meso;const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}
+  if(+p.week)S.week=+p.week;
+}catch{}
+S.askStart=S.mesoList.length>0&&!!S.store["_mesoMeta"];
 render();
 setTimeout(syncCloud,800);
 setInterval(()=>{if(!S.syncing)syncCloud();},60000);
