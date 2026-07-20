@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v9.1</title>
+<title>Training Planner — Felipe v9.2</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -61,6 +61,35 @@ const ALL_WEEKS=Array.from({length:10},(_,i)=>({
 }));
 const WDS=["Lunes","Martes","Miércoles","Jueves","Viernes"];
 const DEFAULT_DAYNAMES=["Upper Body","Lower A","Upper Push","Upper Pull","Lower B"];
+
+// ── Orden visual de días de semana ────────────────────────────────────────────
+// dayOrder[pos] = id de día del plan (1..5) que se exhibe en la posición pos
+// (0=Lunes..4=Viernes). No altera S.plan ni la planilla; es puramente de exhibición.
+function daysAvail(){return Object.keys(S.plan).map(Number).sort((a,b)=>a-b);}
+function defaultDayOrder(){const av=daysAvail();return WDS.map((_,i)=>av[i]??null);}
+function getDayOrder(){
+  const av=daysAvail();
+  if(S.store["_dayOrder"])try{
+    const o=JSON.parse(S.store["_dayOrder"]);
+    if(Array.isArray(o)&&o.length===WDS.length&&o.every(d=>d===null||av.includes(d)))return o;
+  }catch{}
+  return defaultDayOrder();
+}
+function weekdayPosFor(d){const o=getDayOrder();const p=o.indexOf(d);return p<0?d-1:p;}
+function swapDayOrder(posA,posB){
+  const o=getDayOrder();
+  if(posA===posB||o[posA]==null||o[posB]==null)return;
+  [o[posA],o[posB]]=[o[posB],o[posA]];
+  S.store["_dayOrder"]=JSON.stringify(o);
+  saveStore();
+}
+function toggleReorder(){S.reorderMode=!S.reorderMode;S.swapPick=null;render();}
+function tapDayTab(pos){
+  if(!S.reorderMode){const o=getDayOrder();const d=o[pos];if(d)setDay(d);return;}
+  if(S.swapPick===null){S.swapPick=pos;render();return;}
+  if(S.swapPick===pos){S.swapPick=null;render();return;}
+  swapDayOrder(S.swapPick,pos);S.swapPick=null;render();
+}
 
 // Helpers
 const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -169,7 +198,8 @@ window.S={
   progEx:0,progTab:"meso",chart:null,chart2:null,
   syncStatus:"idle",syncing:false,
   driveFile:null,driveStatus:"idle",
-  askStart:false,startMeso:null
+  askStart:false,startMeso:null,
+  reorderMode:false,swapPick:null
 };
 
 // ── Local + Cloud persistence ─────────────────────────────────────────────────
@@ -208,7 +238,7 @@ function updateSyncIcon(){
   el.textContent=S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻";
   el.style.color=S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888";
 }
-const SYNC_PREFIX=k=>k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||k.startsWith("dayname-")||k.startsWith("_meso")||k==="_driveFile";
+const SYNC_PREFIX=k=>k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||k.startsWith("dayname-")||k.startsWith("_meso")||k==="_driveFile"||k==="_dayOrder";
 async function syncCloud(){
   if(S.syncing)return;
   // Hay ediciones locales esperando push (debounce): no aplicar nube para no pisarlas
@@ -567,10 +597,11 @@ function chooseStart(mid,w){
     if(mm?.planData)S.plan=mm.planData;
   }
   if(w)S.week=Math.min(w,S.mesoWeeks[S.meso]||5);
-  // Día según el día de la semana actual (Lun–Vie); fin de semana → Lunes
+  // Día según el día de la semana actual (Lun–Vie), respetando el orden visual
   const wd=new Date().getDay();
-  let d=(wd>=1&&wd<=5)?wd:1;
-  if(!S.plan[d]){const ks=Object.keys(S.plan);if(ks.length)d=+ks[0];}
+  const pos=(wd>=1&&wd<=5)?wd-1:0;
+  let d=getDayOrder()[pos];
+  if(!d||!S.plan[d]){const ks=Object.keys(S.plan);if(ks.length)d=+ks[0];}
   S.day=d;S.view="workout";S.exp=null;S.askStart=false;
   _savePos();render();
 }
@@ -634,11 +665,22 @@ function render(){
 
   // Day nav
   const dname=n=>getDayName(n).replace(/'/g,"&#39;");
-  html+='<div class="daynav">'+WDS.map((wd,i)=>{
-    const d=i+1;const act=d===S.day;
-    return'<button class="dbtn'+(act?' on':'')+'" style="'+(act?'border-color:'+pc+';background:'+pc:'')+'" onclick="setDay('+d+')">'
-      +wd+'<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">'+dname(d)+'</span></button>';
-  }).join('')+'</div>';
+  const dOrder=getDayOrder();
+  html+='<div class="daynav">'+WDS.map((wd,pos)=>{
+    const d=dOrder[pos];
+    if(d==null)return'<button class="dbtn" style="opacity:.35;pointer-events:none">'+wd+'</button>';
+    const act=!S.reorderMode&&d===S.day;
+    const picked=S.reorderMode&&S.swapPick===pos;
+    const bs=picked?'border-color:#BA7517;background:#BA751722;color:#BA7517'
+      :act?'border-color:'+pc+';background:'+pc:'';
+    return'<button class="dbtn'+(act?' on':'')+'" style="'+bs+'" onclick="tapDayTab('+pos+')">'
+      +wd+'<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">'+(S.reorderMode?dname(d):dname(d))+'</span></button>';
+  }).join('')
+    +'<button onclick="toggleReorder()" title="'+(S.reorderMode?"Listo":"Reordenar días")+'" '
+    +'style="margin-left:4px;border:1px solid '+(S.reorderMode?"#BA7517":"#ccc")+';background:'+(S.reorderMode?"#BA751722":"transparent")+';color:'+(S.reorderMode?"#BA7517":"#888")+';border-radius:8px;padding:0 10px;font-size:15px;cursor:pointer;align-self:stretch">'
+    +(S.reorderMode?'✓':'🔀')+'</button>'
+    +'</div>'
+    +(S.reorderMode?'<p style="font-size:11px;color:#888;margin:4px 0 0;text-align:center">Toca dos días para intercambiarlos. Pulsa ✓ cuando termines.</p>':'');
 
   // Week nav
   if(v!=="progress"){
@@ -653,7 +695,7 @@ function render(){
 
   if(v==="workout"){
     html+='<div class="dname-bar">'
-      +'<span style="font-size:11px;color:#888;white-space:nowrap">'+WDS[S.day-1]+' —</span>'
+      +'<span style="font-size:11px;color:#888;white-space:nowrap">'+WDS[weekdayPosFor(S.day)]+' —</span>'
       +'<input type="text" value="'+getDayName(S.day).replace(/"/g,'&quot;')+'" '
       +'onchange="setDayName('+S.day+',this.value)" placeholder="Nombre del entrenamiento..."></div>';
     html+='<div class="thead">'
