@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v9.2</title>
+<title>Training Planner — Felipe v9.3</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -457,6 +457,11 @@ async function handleImport(file){
 
       S.mesoList.push(mid);
       S.mesoWeeks[mid]=blocks.detectedWeeks||5;
+
+      // Limpiar cargas previas de ESTE meso (celda vacía en el Excel = sin carga).
+      // No toca note-/done-: son datos del usuario, no provienen de la planilla.
+      const kgPrefix=mid==="1"?/^kg-\d+-\d+-\d+(-s\d+)?$/:new RegExp("^kg-\\d+-\\d+-\\d+-m"+mid+"(-s\\d+)?$");
+      for(const k of Object.keys(S.store))if(kgPrefix.test(k))delete S.store[k];
 
       const planData={},dayNames={};
       blocks.forEach((block,bi)=>{
