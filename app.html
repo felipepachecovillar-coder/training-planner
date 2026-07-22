@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.1</title>
+<title>Training Planner — Felipe v10.2</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -701,7 +701,7 @@ function render(){
     +'<button id="syncIcon" onclick="syncCloud()" style="border:none;background:transparent;cursor:pointer;font-size:16px;padding:2px 4px;color:'
     +(S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888")+'">'
     +(S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻")+'</button>'
-    +(S.driveFile?'<span id="driveIcon" title="Drive: '+(S.driveFile.name||"").replace(/"/g,"&quot;")+'" style="font-size:12px;padding:2px 4px;color:'+(S.driveStatus==="ok"?"#1D9E75":S.driveStatus==="syncing"?"#888":S.driveStatus==="error"?"#e24b4a":"#888")+'">'+(S.driveStatus==="ok"?"💾✓":S.driveStatus==="syncing"?"💾↻":S.driveStatus==="error"?"💾✕":"💾")+'</span>':'')
+    +(S.driveFile?'<button id="driveIcon" onclick="reconnectDrive()" title="Drive: '+(S.driveFile.name||"").replace(/"/g,"&quot;")+' — toca para reconectar/sincronizar" style="border:none;background:transparent;cursor:pointer;font-size:12px;padding:2px 4px;color:'+(S.driveStatus==="ok"?"#1D9E75":S.driveStatus==="syncing"?"#888":S.driveStatus==="error"?"#e24b4a":"#888")+'">'+(S.driveStatus==="ok"?"💾✓":S.driveStatus==="syncing"?"💾↻":S.driveStatus==="error"?"💾✕":"💾")+'</button>':'')
     +(S.mesoList.length>1
       ?'<select onchange="setMeso(this.value)" style="padding:4px 8px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:12px">'
        +S.mesoList.map((m,i)=>'<option value="'+m+'"'+(m===S.meso?' selected':'')+'>'
