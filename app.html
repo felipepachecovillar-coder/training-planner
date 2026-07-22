@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v9.3</title>
+<title>Training Planner — Felipe v10</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -197,7 +197,7 @@ window.S={
   store:{},importMsg:"",
   progEx:0,progTab:"meso",chart:null,chart2:null,
   syncStatus:"idle",syncing:false,
-  driveFile:null,driveStatus:"idle",
+  driveFile:null,driveStatus:"idle",sheetMap:{},
   askStart:false,startMeso:null,
   reorderMode:false,swapPick:null
 };
@@ -231,6 +231,7 @@ function applyCloud(data){
   }catch{}
   if(data["_mesoWeeks"])try{S.mesoWeeks=JSON.parse(data["_mesoWeeks"]);}catch{}
   if(data["_driveFile"])try{S.driveFile=JSON.parse(data["_driveFile"]);}catch{}
+  if(data["_sheetMap"])try{S.sheetMap=JSON.parse(data["_sheetMap"]);}catch{}
 }
 function updateSyncIcon(){
   const el=document.getElementById("syncIcon");
@@ -238,7 +239,7 @@ function updateSyncIcon(){
   el.textContent=S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻";
   el.style.color=S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888";
 }
-const SYNC_PREFIX=k=>k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||k.startsWith("dayname-")||k.startsWith("_meso")||k==="_driveFile"||k==="_dayOrder";
+const SYNC_PREFIX=k=>k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||k.startsWith("dayname-")||k.startsWith("_meso")||k==="_driveFile"||k==="_dayOrder"||k==="_sheetMap"||k==="_driveMTime";
 async function syncCloud(){
   if(S.syncing)return;
   // Hay ediciones locales esperando push (debounce): no aplicar nube para no pisarlas
@@ -396,6 +397,10 @@ function parseDayBlocks(rows){
             prev._extra=prev._extra||{};
             prev._extra[weekNum]=lv;
           }
+          {
+            prev._extraCells=prev._extraCells||{};
+            prev._extraCells[weekNum]={r,c:loadCol};
+          }
         }
       });
     };
@@ -435,7 +440,7 @@ function parseDayBlocks(rows){
     const rest=cur.restCol>=0?String(rows[r][cur.restCol]||"").trim():"";
 
     cur.exercises.push({name,details,rest,rowIdx:r,
-      weekCols:cur.weekCols,weeks,_extra:{}});
+      weekCols:cur.weekCols,weeks,_extra:{},_extraCells:{}});
   }
   if(cur)days.push(cur);
   days.detectedWeeks=globalMaxWeek||5;
@@ -443,11 +448,20 @@ function parseDayBlocks(rows){
 }
 
 // ── Import ────────────────────────────────────────────────────────────────────
-async function handleImport(file){
+async function handleImport(file,opts={}){
+  const silent=!!opts.silent;
+  const _prevMeso=S.meso,_prevWeek=S.week,_prevDay=S.day,_prevView=S.view,_prevImportMsg=S.importMsg;
+  const _snap=silent?{list:S.mesoList,meta:S.mesoMeta,weeks:S.mesoWeeks,map:S.sheetMap,plan:S.plan,store:JSON.stringify(S.store)}:null;
+  const _restore=()=>{
+    if(!_snap)return;
+    S.mesoList=_snap.list;S.mesoMeta=_snap.meta;S.mesoWeeks=_snap.weeks;S.sheetMap=_snap.map;S.plan=_snap.plan;
+    try{S.store=JSON.parse(_snap.store);}catch{}
+    S.meso=_prevMeso;S.week=_prevWeek;S.day=_prevDay;S.view=_prevView;S.importMsg=_prevImportMsg;
+  };
   try{
     const buf=await file.arrayBuffer();
     const wb=XLSX.read(buf,{type:"array"});
-    S.mesoList=[];S.mesoMeta={};S.mesoWeeks={};
+    S.mesoList=[];S.mesoMeta={};S.mesoWeeks={};S.sheetMap={};
 
     wb.SheetNames.forEach((sn,si)=>{
       const mid=String(si+1);
@@ -463,22 +477,28 @@ async function handleImport(file){
       const kgPrefix=mid==="1"?/^kg-\d+-\d+-\d+(-s\d+)?$/:new RegExp("^kg-\\d+-\\d+-\\d+-m"+mid+"(-s\\d+)?$");
       for(const k of Object.keys(S.store))if(kgPrefix.test(k))delete S.store[k];
 
-      const planData={},dayNames={};
+      const planData={},dayNames={},cellMap={};
       blocks.forEach((block,bi)=>{
         const dayId=bi+1;
         dayNames[dayId]=block.typeName||DEFAULT_DAYNAMES[bi]||"";
         planData[dayId]=block.exercises.map((ex,ei)=>{
-          // Guardar cargas fila 1
+          // Guardar cargas fila 1 + registrar celda destino (aunque venga vacía)
           ex.weekCols.forEach(({weekNum,loadCol})=>{
             if(loadCol<0)return;
+            const hasDouble=ex.weeks[weekNum-1]?.includes(" / ");
+            const ck=dayId+"-"+weekNum+"-"+ei+(hasDouble?"-s0":"");
+            cellMap[ck]=ex.rowIdx+","+loadCol;
             const raw=rows[ex.rowIdx][loadCol];
             const val=String(raw||"").trim();
             if(!val||val==="0")return;
             const base=mid==="1"
               ?"kg-"+dayId+"-"+weekNum+"-"+ei
               :"kg-"+dayId+"-"+weekNum+"-"+ei+"-m"+mid;
-            const hasDouble=ex.weeks[weekNum-1]?.includes(" / ");
             S.store[hasDouble?base+"-s0":base]=val;
+          });
+          // Celdas destino fila 2
+          Object.entries(ex._extraCells||{}).forEach(([wn,cell])=>{
+            cellMap[dayId+"-"+wn+"-"+ei+"-s1"]=cell.r+","+cell.c;
           });
           // Guardar cargas fila 2
           Object.entries(ex._extra||{}).forEach(([wn,val])=>{
@@ -491,10 +511,18 @@ async function handleImport(file){
         });
       });
       S.mesoMeta[mid]={sheetName:sn,planData,dayNames};
+      S.sheetMap[mid]=cellMap;
     });
 
-    if(!S.mesoList.length){S.importMsg="err:No se encontraron días.";render();return;}
-    S.meso=S.mesoList[S.mesoList.length-1];
+    if(!S.mesoList.length){
+      if(silent){_restore();render();return;}
+      S.importMsg="err:No se encontraron días.";render();return;
+    }
+    if(silent&&S.mesoList.includes(_prevMeso)){
+      S.meso=_prevMeso;S.week=Math.min(_prevWeek,S.mesoWeeks[_prevMeso]||5);S.day=_prevDay;S.view=_prevView;
+    }else{
+      S.meso=S.mesoList[S.mesoList.length-1];
+    }
     S.plan=S.mesoMeta[S.meso].planData;
 
     const mm={};
@@ -505,9 +533,13 @@ async function handleImport(file){
     S.store["_mesoList"]=JSON.stringify(S.mesoList);
     S.store["_mesoMeta"]=JSON.stringify(mm);
     S.store["_mesoWeeks"]=JSON.stringify(S.mesoWeeks);
+    S.store["_sheetMap"]=JSON.stringify(S.sheetMap);
     saveStore();
-    S.importMsg="ok:✓ "+file.name+" — "+S.mesoList.length+" mesociclo(s)";
-  }catch(e){S.importMsg="err:Error: "+e.message;}
+    if(!silent)S.importMsg="ok:✓ "+file.name+" — "+S.mesoList.length+" mesociclo(s)";
+  }catch(e){
+    if(silent)_restore();
+    else S.importMsg="err:Error: "+e.message;
+  }
   render();
 }
 
@@ -902,7 +934,7 @@ function setDay(d){S.day=d;S.exp=null;render();}
 function setWeek(w){S.week=w;S.exp=null;_savePos();render();}
 function setMeso(m){S.meso=m;const mm=S.mesoMeta[m];if(mm?.planData)S.plan=mm.planData;S.exp=null;_savePos();render();}
 function toggleEx(i){S.exp=S.exp===i?null:i;render();}
-function updKg(d,w,i,v,si){S.store[kgKey(d,w,i,si)]=v;saveStore();}
+function updKg(d,w,i,v,si){S.store[kgKey(d,w,i,si)]=v;saveStore();_markSheetDirty(S.meso,d,w,i,si);}
 function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();}
 function toggleDone(d,w){const k=doneKey(d,w);if(isDoneVal(S.store[k]))delete S.store[k];else S.store[k]="1";saveStore();render();}
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
@@ -919,8 +951,10 @@ function setProgTab(t){S.progTab=t;if(S.chart){S.chart.destroy();S.chart=null;}i
 //  3) Si tu API key tiene "API restrictions", añade Drive API y Picker API.
 const GOOGLE_CLIENT_ID="999742258977-eg2ve8vohk9uf7c0h89jg66otfcugclh.apps.googleusercontent.com";
 const GOOGLE_API_KEY="AIzaSyAuRA1ywSRPnLW9EO1VtMozi6LvMa0T66A";
-const DRIVE_SCOPE="https://www.googleapis.com/auth/drive.file";
-let _tokenClient=null,_accessToken=null,_pickerLoaded=false;
+const DRIVE_SCOPE="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets";
+let _tokenClient=null,_accessToken=null,_tokenExp=0,_pickerLoaded=false;
+function _setTok(resp){_accessToken=resp.access_token;_tokenExp=Date.now()+((+resp.expires_in||3600)-60)*1000;}
+function _tokenValid(){return !!_accessToken&&Date.now()<_tokenExp;}
 
 function _driveConfigured(){return !GOOGLE_CLIENT_ID.startsWith("REEMPLAZAR");}
 
@@ -953,7 +987,7 @@ async function openGoogleDrive(){
   }
   tc.callback=async resp=>{
     if(resp.error){S.importMsg="err:Autenticación: "+(resp.error_description||resp.error);render();return;}
-    _accessToken=resp.access_token;
+    _setTok(resp);
     try{await _loadPicker();_showDrivePicker();}
     catch(e){S.importMsg="err:"+e.message;render();}
   };
@@ -980,6 +1014,15 @@ function _showDrivePicker(){
     .setVisible(true);
 }
 
+function reconnectDrive(){
+  const tc=_initTokenClient();if(!tc)return;
+  tc.callback=resp=>{
+    if(resp.error){S.driveStatus="error";updateDriveIcon();return;}
+    _setTok(resp);S.driveStatus="ok";updateDriveIcon();
+    _flushSheet();checkDriveChanges();
+  };
+  tc.requestAccessToken({prompt:""});
+}
 function updateDriveIcon(){
   const el=document.getElementById("driveIcon");
   if(!el)return;
@@ -994,7 +1037,7 @@ function _refreshTokenSilent(){
     if(!tc)return resolve(false);
     tc.callback=resp=>{
       if(resp.error){_accessToken=null;return resolve(false);}
-      _accessToken=resp.access_token;resolve(true);
+      _setTok(resp);resolve(true);
     };
     try{tc.requestAccessToken({prompt:""});}catch{resolve(false);}
   });
@@ -1055,23 +1098,127 @@ async function _pickerCallback(data){
     if(!r.ok)throw new Error("HTTP "+r.status);
     const blob=await r.blob();
     const file=new File([blob],fname,{type:blob.type||"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-    if(doc.mimeType==="application/vnd.google-apps.spreadsheet"){
-      S.driveFile=null;delete S.store["_driveFile"];
-    }else{
-      S.driveFile={id:doc.id,name:doc.name,mimeType:doc.mimeType};
-      S.store["_driveFile"]=JSON.stringify(S.driveFile);
-    }
+    S.driveFile={id:doc.id,name:doc.name,mimeType:doc.mimeType};
+    S.store["_driveFile"]=JSON.stringify(S.driveFile);
     await handleImport(file);
+    _refreshMTime();
   }catch(e){S.importMsg="err:Descarga: "+e.message;render();}
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
+// ── Sync bidireccional con Google Sheet nativo ────────────────────────────────
+function colLetter(c){let s="";c++;while(c>0){s=String.fromCharCode(65+(c-1)%26)+s;c=Math.floor((c-1)/26);}return s;}
+const _isNativeSheet=()=>!!S.driveFile&&S.driveFile.mimeType==="application/vnd.google-apps.spreadsheet";
+let _dirtyCells=new Set(),_pendingSheet=null,_sheetFlushing=false;
+
+function _markSheetDirty(mid,d,w,i,si){
+  if(!_isNativeSheet())return false;
+  const map=S.sheetMap[mid];if(!map)return false;
+  const key=d+"-"+w+"-"+i+(si!==undefined?"-s"+si:"");
+  if(!(key in map))return false;
+  _dirtyCells.add(mid+"|"+key);
+  if(_pendingSheet)clearTimeout(_pendingSheet);
+  _pendingSheet=setTimeout(()=>{_pendingSheet=null;_flushSheet();},4000);
+  return true;
+}
+
+function _sheetPayload(items){
+  const data=[];
+  for(const it of items){
+    const bar=it.indexOf("|");
+    const mid=it.slice(0,bar),key=it.slice(bar+1);
+    const cell=S.sheetMap[mid]&&S.sheetMap[mid][key];if(!cell)continue;
+    const parts=cell.split(",");const r=+parts[0],c=+parts[1];
+    const m=/^(\d+)-(\d+)-(\d+)(?:-s(\d+))?$/.exec(key);if(!m)continue;
+    let base=mid==="1"?"kg-"+m[1]+"-"+m[2]+"-"+m[3]:"kg-"+m[1]+"-"+m[2]+"-"+m[3]+"-m"+mid;
+    if(m[4]!==undefined)base+="-s"+m[4];
+    const sn=String((S.mesoMeta[mid]&&S.mesoMeta[mid].sheetName)||("Hoja"+mid)).replace(/'/g,"''");
+    const val=S.store[base];
+    data.push({range:"'"+sn+"'!"+colLetter(c)+(r+1),values:[[val==null?"":String(val)]]});
+  }
+  return data;
+}
+
+async function _flushSheet(){
+  if(_sheetFlushing||!_dirtyCells.size||!_isNativeSheet())return;
+  if(!_tokenValid()){
+    const ok=await _refreshTokenSilent();
+    if(!ok){S.driveStatus="error";updateDriveIcon();return;}
+  }
+  _sheetFlushing=true;S.driveStatus="syncing";updateDriveIcon();
+  const batch=[..._dirtyCells];_dirtyCells.clear();
+  try{
+    const data=_sheetPayload(batch);
+    if(data.length){
+      const r=await fetch("https://sheets.googleapis.com/v4/spreadsheets/"+S.driveFile.id+"/values:batchUpdate",{
+        method:"POST",
+        headers:{"Authorization":"Bearer "+_accessToken,"Content-Type":"application/json"},
+        body:JSON.stringify({valueInputOption:"USER_ENTERED",data})
+      });
+      if(!r.ok)throw new Error("Sheets HTTP "+r.status);
+      await _refreshMTime();
+    }
+    S.driveStatus="ok";
+  }catch(e){
+    console.warn("Sheet write:",e);
+    batch.forEach(k=>_dirtyCells.add(k));
+    S.driveStatus="error";
+  }finally{
+    _sheetFlushing=false;updateDriveIcon();
+  }
+}
+
+async function _refreshMTime(){
+  if(!S.driveFile||!_accessToken)return;
+  try{
+    const r=await fetch("https://www.googleapis.com/drive/v3/files/"+S.driveFile.id+"?fields=modifiedTime",
+      {headers:{Authorization:"Bearer "+_accessToken}});
+    if(!r.ok)return;
+    const mt=(await r.json()).modifiedTime||"";
+    if(mt){S.store["_driveMTime"]=mt;saveLocal();}
+  }catch{}
+}
+
+async function _downloadSheetFile(){
+  let fname=S.driveFile.name||"planilla.xlsx";
+  const url="https://www.googleapis.com/drive/v3/files/"+S.driveFile.id
+    +"/export?mimeType="+encodeURIComponent("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  if(!/\.xlsx?$/i.test(fname))fname+=".xlsx";
+  const r=await fetch(url,{headers:{Authorization:"Bearer "+_accessToken}});
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  const blob=await r.blob();
+  return new File([blob],fname,{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+}
+
+async function checkDriveChanges(){
+  if(!_isNativeSheet())return;
+  if(_sheetFlushing||_pendingSheet||_dirtyCells.size)return; // vaciar escrituras primero
+  if(S.exp!==null)return;                                     // usuario editando: no interrumpir
+  if(!_tokenValid())return;
+  try{
+    const r=await fetch("https://www.googleapis.com/drive/v3/files/"+S.driveFile.id+"?fields=modifiedTime",
+      {headers:{Authorization:"Bearer "+_accessToken}});
+    if(r.status===401){_accessToken=null;S.driveStatus="error";updateDriveIcon();return;}
+    if(!r.ok)return;
+    const mt=(await r.json()).modifiedTime||"";
+    const known=S.store["_driveMTime"]||"";
+    if(!known){if(mt){S.store["_driveMTime"]=mt;saveLocal();}return;}
+    if(!mt||mt<=known)return;
+    S.driveStatus="syncing";updateDriveIcon();
+    const file=await _downloadSheetFile();
+    await handleImport(file,{silent:true});
+    S.store["_driveMTime"]=mt;saveLocal();
+    S.driveStatus="ok";updateDriveIcon();
+  }catch(e){console.warn("Drive poll:",e);S.driveStatus="error";updateDriveIcon();}
+}
+
 loadLocal();
 normStore();
 if(S.store["_mesoList"])try{S.mesoList=JSON.parse(S.store["_mesoList"]);S.meso=S.mesoList[S.mesoList.length-1];}catch{}
 if(S.store["_mesoMeta"])try{S.mesoMeta=JSON.parse(S.store["_mesoMeta"]);const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}catch{}
 if(S.store["_mesoWeeks"])try{S.mesoWeeks=JSON.parse(S.store["_mesoWeeks"]);}catch{}
 if(S.store["_driveFile"])try{S.driveFile=JSON.parse(S.store["_driveFile"]);}catch{}
+if(S.store["_sheetMap"])try{S.sheetMap=JSON.parse(S.store["_sheetMap"]);}catch{}
 if(S.store["_lastPos"])try{
   const p=JSON.parse(S.store["_lastPos"]);
   if(S.mesoList.includes(p.meso)){S.meso=p.meso;const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}
@@ -1081,6 +1228,8 @@ S.askStart=S.mesoList.length>0&&!!S.store["_mesoMeta"];
 render();
 setTimeout(syncCloud,800);
 setInterval(()=>{if(!S.syncing)syncCloud();},60000);
+setTimeout(checkDriveChanges,3000);
+setInterval(checkDriveChanges,60000);
 </script>
 </body>
 </html>
