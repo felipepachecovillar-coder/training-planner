@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10</title>
+<title>Training Planner — Felipe v10.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -391,16 +391,16 @@ function parseDayBlocks(rows){
           prev.weeks[wi]=prev.weeks[wi]&&prev.weeks[wi]!=="-"
             ?prev.weeks[wi]+" / "+pres:pres;
         }
-        if(loadCol>=0){
+        if(loadCol>=0&&pres&&pres!=="-"){
+          // Solo registrar celda de continuación si esta semana tiene prescripción
+          // real (evita mapear filas de separación/encabezado como "fila doble").
           const lv=String(rows[r][loadCol]||"").trim();
           if(lv&&lv!=="0"){
             prev._extra=prev._extra||{};
             prev._extra[weekNum]=lv;
           }
-          {
-            prev._extraCells=prev._extraCells||{};
-            prev._extraCells[weekNum]={r,c:loadCol};
-          }
+          prev._extraCells=prev._extraCells||{};
+          prev._extraCells[weekNum]={r,c:loadCol};
         }
       });
     };
@@ -465,7 +465,13 @@ async function handleImport(file,opts={}){
 
     wb.SheetNames.forEach((sn,si)=>{
       const mid=String(si+1);
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:""});
+      const ws=wb.Sheets[sn];
+      // Offset del rango real: un Sheet nativo suele exportar empezando en B2, no A1.
+      // sheet_to_json normaliza a índice 0, pero para ESCRIBIR de vuelta necesitamos
+      // la coordenada absoluta. offR/offC = fila/columna donde arranca el contenido.
+      let offR=0,offC=0;
+      try{const rg=XLSX.utils.decode_range(ws["!ref"]||"A1");offR=rg.s.r;offC=rg.s.c;}catch{}
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
       const blocks=parseDayBlocks(rows);
       if(!blocks.length)return;
 
@@ -487,7 +493,7 @@ async function handleImport(file,opts={}){
             if(loadCol<0)return;
             const hasDouble=ex.weeks[weekNum-1]?.includes(" / ");
             const ck=dayId+"-"+weekNum+"-"+ei+(hasDouble?"-s0":"");
-            cellMap[ck]=ex.rowIdx+","+loadCol;
+            cellMap[ck]=(ex.rowIdx+offR)+","+(loadCol+offC);
             const raw=rows[ex.rowIdx][loadCol];
             const val=String(raw||"").trim();
             if(!val||val==="0")return;
@@ -498,7 +504,7 @@ async function handleImport(file,opts={}){
           });
           // Celdas destino fila 2
           Object.entries(ex._extraCells||{}).forEach(([wn,cell])=>{
-            cellMap[dayId+"-"+wn+"-"+ei+"-s1"]=cell.r+","+cell.c;
+            cellMap[dayId+"-"+wn+"-"+ei+"-s1"]=(cell.r+offR)+","+(cell.c+offC);
           });
           // Guardar cargas fila 2
           Object.entries(ex._extra||{}).forEach(([wn,val])=>{
@@ -511,7 +517,14 @@ async function handleImport(file,opts={}){
         });
       });
       S.mesoMeta[mid]={sheetName:sn,planData,dayNames};
-      S.sheetMap[mid]=cellMap;
+      // Solo habilitar escritura (sheetMap) si el meso tiene columnas "Carga" reales.
+      // Se exige que la mayoría de columnas de semana tengan su par de carga, para
+      // descartar formatos legados donde una columna suelta da falso positivo.
+      // Sin esto, el sync podría sobrescribir celdas incorrectas del entrenador.
+      let wcTot=0,wcLoad=0;
+      blocks.forEach(b=>(b.weekCols||[]).forEach(w=>{wcTot++;if(w.loadCol>=0)wcLoad++;}));
+      const hasLoadCols=wcTot>0&&wcLoad>=wcTot*0.5;
+      S.sheetMap[mid]=hasLoadCols?cellMap:{};
     });
 
     if(!S.mesoList.length){
