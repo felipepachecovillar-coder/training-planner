@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.2</title>
+<title>Training Planner — Felipe v10.4</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -93,6 +93,10 @@ function tapDayTab(pos){
 
 // Helpers
 const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+function looksLikeExcelDate(v){
+  const n=typeof v==="number"?v:parseFloat(String(v).replace(",","."));
+  return Number.isFinite(n)&&n>=40000&&n<=60000&&Number.isInteger(n);
+}
 // parseFloat tolerante a coma decimal ("82,5" → 82.5). Retorna null si no es número.
 const num=v=>{const n=parseFloat(String(v??"").trim().replace(",","."));return isNaN(n)?null:n;};
 // Semanas dinámicas: respeta el patrón de 10 para nw<=10, extiende sin crashear para más
@@ -495,6 +499,7 @@ async function handleImport(file,opts={}){
             const ck=dayId+"-"+weekNum+"-"+ei+(hasDouble?"-s0":"");
             cellMap[ck]=(ex.rowIdx+offR)+","+(loadCol+offC);
             const raw=rows[ex.rowIdx][loadCol];
+            if(looksLikeExcelDate(raw))return;
             const val=String(raw||"").trim();
             if(!val||val==="0")return;
             const base=mid==="1"
@@ -1166,7 +1171,7 @@ async function _flushSheet(){
       const r=await fetch("https://sheets.googleapis.com/v4/spreadsheets/"+S.driveFile.id+"/values:batchUpdate",{
         method:"POST",
         headers:{"Authorization":"Bearer "+_accessToken,"Content-Type":"application/json"},
-        body:JSON.stringify({valueInputOption:"USER_ENTERED",data})
+        body:JSON.stringify({valueInputOption:"RAW",data})
       });
       if(!r.ok)throw new Error("Sheets HTTP "+r.status);
       await _refreshMTime();
@@ -1207,7 +1212,12 @@ async function checkDriveChanges(){
   if(!_isNativeSheet())return;
   if(_sheetFlushing||_pendingSheet||_dirtyCells.size)return; // vaciar escrituras primero
   if(S.exp!==null)return;                                     // usuario editando: no interrumpir
-  if(!_tokenValid())return;
+  if(!_tokenValid()){
+    // Token expirado (~1h): intentar renovar en silencio una vez antes de rendirse.
+    const ok=await _refreshTokenSilent();
+    if(!ok){S.driveStatus="error";updateDriveIcon();return;}
+    S.driveStatus="ok";updateDriveIcon();
+  }
   try{
     const r=await fetch("https://www.googleapis.com/drive/v3/files/"+S.driveFile.id+"?fields=modifiedTime",
       {headers:{Authorization:"Bearer "+_accessToken}});
