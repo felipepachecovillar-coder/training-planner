@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.4</title>
+<title>Training Planner — Felipe v10.9</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -92,6 +92,13 @@ function tapDayTab(pos){
 }
 
 // Helpers
+// Súper serie: nombre con "+" (ej. "Curl prono + Curl muñeca") → 2 ejercicios,
+// 2 pesos independientes que se guardan como "p0 / p1" en la única celda de carga.
+function supersetParts(name){
+  if(!name||name.indexOf("+")<0)return null;
+  const ps=name.split("+").map(s=>s.trim()).filter(Boolean);
+  return ps.length>=2?ps:null;
+}
 const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 function looksLikeExcelDate(v){
   const n=typeof v==="number"?v:parseFloat(String(v).replace(",","."));
@@ -201,7 +208,7 @@ window.S={
   store:{},importMsg:"",
   progEx:0,progTab:"meso",chart:null,chart2:null,
   syncStatus:"idle",syncing:false,
-  driveFile:null,driveStatus:"idle",sheetMap:{},
+  driveFile:null,driveStatus:"idle",sheetMap:{},noteMap:{},ssMap:{},
   askStart:false,startMeso:null,
   reorderMode:false,swapPick:null
 };
@@ -236,6 +243,8 @@ function applyCloud(data){
   if(data["_mesoWeeks"])try{S.mesoWeeks=JSON.parse(data["_mesoWeeks"]);}catch{}
   if(data["_driveFile"])try{S.driveFile=JSON.parse(data["_driveFile"]);}catch{}
   if(data["_sheetMap"])try{S.sheetMap=JSON.parse(data["_sheetMap"]);}catch{}
+  if(data["_noteMap"])try{S.noteMap=JSON.parse(data["_noteMap"]);}catch{}
+  if(data["_ssMap"])try{S.ssMap=JSON.parse(data["_ssMap"]);}catch{}
 }
 function updateSyncIcon(){
   const el=document.getElementById("syncIcon");
@@ -243,7 +252,7 @@ function updateSyncIcon(){
   el.textContent=S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻";
   el.style.color=S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888";
 }
-const SYNC_PREFIX=k=>k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||k.startsWith("dayname-")||k.startsWith("_meso")||k==="_driveFile"||k==="_dayOrder"||k==="_sheetMap"||k==="_driveMTime";
+const SYNC_PREFIX=k=>k.startsWith("kg-")||k.startsWith("note-")||k.startsWith("done-")||k.startsWith("dayname-")||k.startsWith("_meso")||k==="_driveFile"||k==="_dayOrder"||k==="_sheetMap"||k==="_noteMap"||k==="_ssMap"||k==="_driveMTime";
 async function syncCloud(){
   if(S.syncing)return;
   // Hay ediciones locales esperando push (debounce): no aplicar nube para no pisarlas
@@ -320,7 +329,12 @@ function parseDayBlocks(rows){
       for(let x=c+1;x<=c+2&&x<hdr.length;x++){
         if(/carga/i.test(String(hdr[x]||""))){lc=x;break;}
       }
-      cols.push({weekNum:wNum,presCol:c,loadCol:lc});
+      // Buscar "Observaciones" tras la carga (columna opcional, solo algunos mesos)
+      let oc=-1;
+      if(lc>=0)for(let x=lc+1;x<=lc+2&&x<hdr.length;x++){
+        if(/observaci/i.test(String(hdr[x]||""))){oc=x;break;}
+      }
+      cols.push({weekNum:wNum,presCol:c,loadCol:lc,obsCol:oc});
     }
     // Formato "Semana 1" sin columna Carga — igual válido, loadCol=-1
     return cols;
@@ -443,8 +457,14 @@ function parseDayBlocks(rows){
     const details=cur.detailsCol>=0?String(rows[r][cur.detailsCol]||"").trim():"";
     const rest=cur.restCol>=0?String(rows[r][cur.restCol]||"").trim():"";
 
+    // Observaciones del entrenador por semana (columna opcional del Sheet)
+    const obs={};
+    cur.weekCols.forEach(({weekNum,obsCol})=>{
+      if(obsCol>=0){const ov=String(rows[r][obsCol]||"").trim();if(ov)obs[weekNum]=ov;}
+    });
+
     cur.exercises.push({name,details,rest,rowIdx:r,
-      weekCols:cur.weekCols,weeks,_extra:{},_extraCells:{}});
+      weekCols:cur.weekCols,weeks,_extra:{},_extraCells:{},obs});
   }
   if(cur)days.push(cur);
   days.detectedWeeks=globalMaxWeek||5;
@@ -455,17 +475,17 @@ function parseDayBlocks(rows){
 async function handleImport(file,opts={}){
   const silent=!!opts.silent;
   const _prevMeso=S.meso,_prevWeek=S.week,_prevDay=S.day,_prevView=S.view,_prevImportMsg=S.importMsg;
-  const _snap=silent?{list:S.mesoList,meta:S.mesoMeta,weeks:S.mesoWeeks,map:S.sheetMap,plan:S.plan,store:JSON.stringify(S.store)}:null;
+  const _snap=silent?{list:S.mesoList,meta:S.mesoMeta,weeks:S.mesoWeeks,map:S.sheetMap,nmap:S.noteMap,ssm:S.ssMap,plan:S.plan,store:JSON.stringify(S.store)}:null;
   const _restore=()=>{
     if(!_snap)return;
-    S.mesoList=_snap.list;S.mesoMeta=_snap.meta;S.mesoWeeks=_snap.weeks;S.sheetMap=_snap.map;S.plan=_snap.plan;
+    S.mesoList=_snap.list;S.mesoMeta=_snap.meta;S.mesoWeeks=_snap.weeks;S.sheetMap=_snap.map;S.noteMap=_snap.nmap;S.ssMap=_snap.ssm;S.plan=_snap.plan;
     try{S.store=JSON.parse(_snap.store);}catch{}
     S.meso=_prevMeso;S.week=_prevWeek;S.day=_prevDay;S.view=_prevView;S.importMsg=_prevImportMsg;
   };
   try{
     const buf=await file.arrayBuffer();
     const wb=XLSX.read(buf,{type:"array"});
-    S.mesoList=[];S.mesoMeta={};S.mesoWeeks={};S.sheetMap={};
+    S.mesoList=[];S.mesoMeta={};S.mesoWeeks={};S.sheetMap={};S.noteMap={};S.ssMap={};
 
     wb.SheetNames.forEach((sn,si)=>{
       const mid=String(si+1);
@@ -487,18 +507,37 @@ async function handleImport(file,opts={}){
       const kgPrefix=mid==="1"?/^kg-\d+-\d+-\d+(-s\d+)?$/:new RegExp("^kg-\\d+-\\d+-\\d+-m"+mid+"(-s\\d+)?$");
       for(const k of Object.keys(S.store))if(kgPrefix.test(k))delete S.store[k];
 
-      const planData={},dayNames={},cellMap={};
+      const planData={},dayNames={},cellMap={},obsMap={},ssCells={};
       blocks.forEach((block,bi)=>{
         const dayId=bi+1;
         dayNames[dayId]=block.typeName||DEFAULT_DAYNAMES[bi]||"";
         planData[dayId]=block.exercises.map((ex,ei)=>{
+          const ssParts=supersetParts(ex.name); // súper serie por "+" en el nombre
           // Guardar cargas fila 1 + registrar celda destino (aunque venga vacía)
           ex.weekCols.forEach(({weekNum,loadCol})=>{
             if(loadCol<0)return;
             const hasDouble=ex.weeks[weekNum-1]?.includes(" / ");
+            const isSS=!!ssParts;
+            const raw=rows[ex.rowIdx][loadCol];
+            if(isSS){
+              // Súper serie: una celda con dos pesos "20 / 15" → s0/s1 misma celda.
+              const cellRef=(ex.rowIdx+offR)+","+(loadCol+offC);
+              cellMap[dayId+"-"+weekNum+"-"+ei+"-s0"]=cellRef;
+              cellMap[dayId+"-"+weekNum+"-"+ei+"-s1"]=cellRef;
+              ssCells[dayId+"-"+weekNum+"-"+ei]=true; // marca para concatenar al escribir
+              if(!looksLikeExcelDate(raw)){
+                const txt=String(raw||"").trim();
+                if(txt&&txt!=="0"){
+                  const p=txt.split("/").map(s=>s.trim());
+                  const base=mid==="1"?"kg-"+dayId+"-"+weekNum+"-"+ei:"kg-"+dayId+"-"+weekNum+"-"+ei+"-m"+mid;
+                  if(p[0])S.store[base+"-s0"]=p[0];
+                  if(p[1])S.store[base+"-s1"]=p[1];
+                }
+              }
+              return;
+            }
             const ck=dayId+"-"+weekNum+"-"+ei+(hasDouble?"-s0":"");
             cellMap[ck]=(ex.rowIdx+offR)+","+(loadCol+offC);
-            const raw=rows[ex.rowIdx][loadCol];
             if(looksLikeExcelDate(raw))return;
             const val=String(raw||"").trim();
             if(!val||val==="0")return;
@@ -518,6 +557,16 @@ async function handleImport(file,opts={}){
               :"kg-"+dayId+"-"+wn+"-"+ei+"-m"+mid;
             S.store[base+"-s1"]=val;
           });
+          // Observaciones: registrar celda destino (para escritura) y sembrar la
+          // nota del coach SOLO si el usuario no tiene ya una nota propia ahí.
+          // noteKey siempre usa -m{mid} (incluso meso 1).
+          ex.weekCols.forEach(({weekNum,obsCol})=>{
+            if(obsCol<0)return;
+            obsMap[dayId+"-"+weekNum+"-"+ei]=(ex.rowIdx+offR)+","+(obsCol+offC);
+            const nk="note-"+dayId+"-"+weekNum+"-"+ei+"-m"+mid;
+            const coachNote=(ex.obs||{})[weekNum];
+            if(coachNote&&!S.store[nk])S.store[nk]=coachNote; // app manda: no pisa lo tuyo
+          });
           return{name:ex.name,details:ex.details,rest:ex.rest,weeks:ex.weeks};
         });
       });
@@ -530,6 +579,9 @@ async function handleImport(file,opts={}){
       blocks.forEach(b=>(b.weekCols||[]).forEach(w=>{wcTot++;if(w.loadCol>=0)wcLoad++;}));
       const hasLoadCols=wcTot>0&&wcLoad>=wcTot*0.5;
       S.sheetMap[mid]=hasLoadCols?cellMap:{};
+      // Mapa de celdas de observaciones (para escritura app→Sheet). Mismo guard.
+      S.noteMap[mid]=hasLoadCols?obsMap:{};
+      S.ssMap[mid]=hasLoadCols?ssCells:{};
     });
 
     if(!S.mesoList.length){
@@ -552,6 +604,8 @@ async function handleImport(file,opts={}){
     S.store["_mesoMeta"]=JSON.stringify(mm);
     S.store["_mesoWeeks"]=JSON.stringify(S.mesoWeeks);
     S.store["_sheetMap"]=JSON.stringify(S.sheetMap);
+    S.store["_noteMap"]=JSON.stringify(S.noteMap);
+    S.store["_ssMap"]=JSON.stringify(S.ssMap);
     saveStore();
     if(!silent)S.importMsg="ok:✓ "+file.name+" — "+S.mesoList.length+" mesociclo(s)";
   }catch(e){
@@ -683,7 +737,7 @@ function renderStart(){
         +w.label+'</button>';
     }).join('')
     +'</div>'
-    +'<div style="margin-top:16px;text-align:center"><a href="#" onclick="chooseStart(null,null);return false" style="font-size:12px;color:#888">Omitir</a></div>'
+    +'<div style="margin-top:16px;text-align:center"><a href="#" onclick="chooseStart(null,null);return false" style="font-size:13px;color:#888">Cerrar</a></div>'
     +'</div>';
 }
 
@@ -706,6 +760,7 @@ function render(){
     +'<button id="syncIcon" onclick="syncCloud()" style="border:none;background:transparent;cursor:pointer;font-size:16px;padding:2px 4px;color:'
     +(S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888")+'">'
     +(S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻")+'</button>'
+    +'<button id="editIcon" onclick="toggleReorder()" title="'+(S.reorderMode?"Listo (reordenar días)":"Reordenar días")+'" style="border:none;background:transparent;cursor:pointer;font-size:15px;padding:2px 4px;color:'+(S.reorderMode?"#BA7517":"#888")+'">'+(S.reorderMode?'✓':'✏️')+'</button>'
     +(S.driveFile?'<button id="driveIcon" onclick="reconnectDrive()" title="Drive: '+(S.driveFile.name||"").replace(/"/g,"&quot;")+' — toca para reconectar/sincronizar" style="border:none;background:transparent;cursor:pointer;font-size:12px;padding:2px 4px;color:'+(S.driveStatus==="ok"?"#1D9E75":S.driveStatus==="syncing"?"#888":S.driveStatus==="error"?"#e24b4a":"#888")+'">'+(S.driveStatus==="ok"?"💾✓":S.driveStatus==="syncing"?"💾↻":S.driveStatus==="error"?"💾✕":"💾")+'</button>':'')
     +(S.mesoList.length>1
       ?'<select onchange="setMeso(this.value)" style="padding:4px 8px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:12px">'
@@ -731,11 +786,8 @@ function render(){
     return'<button class="dbtn'+(act?' on':'')+'" style="'+bs+'" onclick="tapDayTab('+pos+')">'
       +wd+'<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">'+(S.reorderMode?dname(d):dname(d))+'</span></button>';
   }).join('')
-    +'<button onclick="toggleReorder()" title="'+(S.reorderMode?"Listo":"Reordenar días")+'" '
-    +'style="margin-left:4px;border:1px solid '+(S.reorderMode?"#BA7517":"#ccc")+';background:'+(S.reorderMode?"#BA751722":"transparent")+';color:'+(S.reorderMode?"#BA7517":"#888")+';border-radius:8px;padding:0 10px;font-size:15px;cursor:pointer;align-self:stretch">'
-    +(S.reorderMode?'✓':'🔀')+'</button>'
     +'</div>'
-    +(S.reorderMode?'<p style="font-size:11px;color:#888;margin:4px 0 0;text-align:center">Toca dos días para intercambiarlos. Pulsa ✓ cuando termines.</p>':'');
+    +(S.reorderMode?'<p style="font-size:11px;color:#888;margin:4px 0 0;text-align:center">Toca dos días para intercambiarlos. Pulsa ✓ (arriba) cuando termines.</p>':'');
 
   // Week nav
   if(v!=="progress"){
@@ -745,7 +797,7 @@ function render(){
         +';background:'+(act?wpc:done?wpc+'25':'transparent')
         +';color:'+(act?'#fff':done?wpc:'#888')
         +';font-weight:'+(act?500:400)+'" onclick="setWeek('+w.id+')" title="'+w.phase+'">'+w.label+'</button>';
-    }).join('')+'<span class="pbadge" style="background:'+pc+'22;color:'+pc+'">'+wk.phase+'</span></div>';
+    }).join('')+'<button class="pbadge" onclick="openWeekPicker()" title="Cambiar semana/mesociclo" style="background:'+pc+'22;color:'+pc+';border:none;cursor:pointer">'+wk.phase+' ▾</button></div>';
   }
 
   if(v==="workout"){
@@ -763,10 +815,16 @@ function render(){
     html+=exs.map((ex,i)=>{
       const pres=ex.weeks[S.week-1]||"-";
       const skip=pres==="-";
-      const parts=(!skip&&pres.includes(" / "))?pres.split(" / "):[pres];
-      const isMulti=parts.length>1;
+      const ssParts=supersetParts(ex.name); // súper serie por "+" en el nombre
+      // Etiquetas de los inputs de peso: si es súper serie, los dos nombres;
+      // si es ejercicio doble (prescripción con "/"), las dos prescripciones.
+      let labels;
+      if(ssParts)labels=ssParts;
+      else if(!skip&&pres.includes(" / "))labels=pres.split(" / ");
+      else labels=[pres];
+      const isMulti=labels.length>1;
       const kgVals=isMulti
-        ?parts.map((_,si)=>S.store[kgKey(S.day,S.week,i,si)]||"")
+        ?labels.map((_,si)=>S.store[kgKey(S.day,S.week,i,si)]||"")
         :[S.store[kgKey(S.day,S.week,i)]||""];
       const kgDisplay=kgVals.filter(Boolean).join(" / ");
       const note=S.store[noteKey(S.day,S.week,i)]||"";
@@ -776,7 +834,7 @@ function render(){
       if(isExp&&!skip){
         expHtml='<div class="exexp">';
         if(isMulti){
-          parts.forEach((p,si)=>{
+          labels.forEach((p,si)=>{
             const val=S.store[kgKey(S.day,S.week,i,si)]||"";
             expHtml+='<div><label>'+esc(p)+' — kg</label>'
               +'<input type="number" value="'+val+'" placeholder="0" style="width:80px" '
@@ -936,24 +994,29 @@ function renderSync(){
     +'<button onclick="openGoogleDrive()" style="padding:8px 18px;border-radius:8px;border:none;background:#378ADD;color:#fff;font-size:13px;font-weight:500;cursor:pointer">Importar desde Google Drive</button>'
     +(!_driveConfigured()?'<p style="margin-top:10px;font-size:11px;color:#a32d2d;line-height:1.5">⚠ Google Drive aún no configurado. Edita GOOGLE_CLIENT_ID en el código (ver instrucciones de SETUP).</p>':'')
     +'</div>'
-    +'<div class="syncard"><h3>2. Exportar cargas al entrenador</h3>'
-    +'<p>Genera un .xlsx con todas tus cargas. Siempre disponible.</p>'
-    +'<button style="padding:8px 18px;border-radius:8px;border:none;color:#fff;font-size:13px;font-weight:500;cursor:pointer;background:#378ADD" onclick="handleExport()">Descargar .xlsx con cargas</button></div>'
     +(msg?'<div class="msg '+(isOk?'ok':'err')+'">'+txt+'</div>':'')
     +'<div style="padding:12px 14px;background:#f5f5f3;border-radius:8px;font-size:12px;color:#888;line-height:1.6;margin-top:12px">'
-    +'<strong style="color:#1a1a1a">Flujo semanal:</strong><br>'
-    +'Lun–Vie: registra cargas → Dom: exporta → envía → importa nueva planilla</div>'
+    +'<strong style="color:#1a1a1a">Sincronización automática:</strong><br>'
+    +'Tus cargas se guardan solas en la planilla. Los cambios del entrenador aparecen al recargar.</div>'
     +'</div>';
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 function setView(v){S.view=v;S.importMsg="";if(S.chart&&v!=="progress"){S.chart.destroy();S.chart=null;}if(S.chart2&&v!=="progress"){S.chart2.destroy();S.chart2=null;}render();}
 function setDay(d){S.day=d;S.exp=null;render();}
+function openWeekPicker(){S.startMeso=null;S.askStart=true;render();}
 function setWeek(w){S.week=w;S.exp=null;_savePos();render();}
 function setMeso(m){S.meso=m;const mm=S.mesoMeta[m];if(mm?.planData)S.plan=mm.planData;S.exp=null;_savePos();render();}
-function toggleEx(i){S.exp=S.exp===i?null:i;render();}
+function toggleEx(i){
+  const wasOpen=S.exp!==null;
+  S.exp=S.exp===i?null:i;
+  render();
+  // Al cerrar (ya no hay ejercicio expandido), retomar el sync que la guarda de
+  // checkDriveChanges pospuso mientras editabas.
+  if(wasOpen&&S.exp===null&&typeof checkDriveChanges==="function")checkDriveChanges();
+}
 function updKg(d,w,i,v,si){S.store[kgKey(d,w,i,si)]=v;saveStore();_markSheetDirty(S.meso,d,w,i,si);}
-function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();}
+function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();_markNoteDirty(S.meso,d,w,i);}
 function toggleDone(d,w){const k=doneKey(d,w);if(isDoneVal(S.store[k]))delete S.store[k];else S.store[k]="1";saveStore();render();}
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
 function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
@@ -1140,17 +1203,51 @@ function _markSheetDirty(mid,d,w,i,si){
   return true;
 }
 
+// Notas: mismo mecanismo, marcadas con prefijo "N#" para distinguir de cargas.
+function _markNoteDirty(mid,d,w,i){
+  if(!_isNativeSheet())return false;
+  const map=S.noteMap[mid];if(!map)return false;
+  const key=d+"-"+w+"-"+i;
+  if(!(key in map))return false;
+  _dirtyCells.add("N#"+mid+"|"+key);
+  if(_pendingSheet)clearTimeout(_pendingSheet);
+  _pendingSheet=setTimeout(()=>{_pendingSheet=null;_flushSheet();},4000);
+  return true;
+}
+
 function _sheetPayload(items){
   const data=[];
+  const ssDone=new Set(); // celdas de súper serie ya emitidas (evita duplicar)
   for(const it of items){
-    const bar=it.indexOf("|");
-    const mid=it.slice(0,bar),key=it.slice(bar+1);
+    const isNote=it.startsWith("N#");
+    const item=isNote?it.slice(2):it;
+    const bar=item.indexOf("|");
+    const mid=item.slice(0,bar),key=item.slice(bar+1);
+    const sn=String((S.mesoMeta[mid]&&S.mesoMeta[mid].sheetName)||("Hoja"+mid)).replace(/'/g,"''");
+    if(isNote){
+      const cell=S.noteMap[mid]&&S.noteMap[mid][key];if(!cell)continue;
+      const parts=cell.split(",");const r=+parts[0],c=+parts[1];
+      const m=/^(\d+)-(\d+)-(\d+)$/.exec(key);if(!m)continue;
+      const val=S.store["note-"+m[1]+"-"+m[2]+"-"+m[3]+"-m"+mid];
+      data.push({range:"'"+sn+"'!"+colLetter(c)+(r+1),values:[[val==null?"":String(val)]]});
+      continue;
+    }
     const cell=S.sheetMap[mid]&&S.sheetMap[mid][key];if(!cell)continue;
     const parts=cell.split(",");const r=+parts[0],c=+parts[1];
     const m=/^(\d+)-(\d+)-(\d+)(?:-s(\d+))?$/.exec(key);if(!m)continue;
-    let base=mid==="1"?"kg-"+m[1]+"-"+m[2]+"-"+m[3]:"kg-"+m[1]+"-"+m[2]+"-"+m[3]+"-m"+mid;
+    const baseKey=m[1]+"-"+m[2]+"-"+m[3];
+    let base=mid==="1"?"kg-"+baseKey:"kg-"+baseKey+"-m"+mid;
+    // Súper serie: combinar los dos sub-pesos "s0 / s1" en la única celda.
+    if(S.ssMap[mid]&&S.ssMap[mid][baseKey]){
+      const ssId=mid+"|"+baseKey;
+      if(ssDone.has(ssId))continue; // ya emitida por el otro sub-peso
+      ssDone.add(ssId);
+      const a=S.store[base+"-s0"],b=S.store[base+"-s1"];
+      const combined=[a,b].filter(x=>x!=null&&String(x).trim()!=="").join(" / ");
+      data.push({range:"'"+sn+"'!"+colLetter(c)+(r+1),values:[[combined]]});
+      continue;
+    }
     if(m[4]!==undefined)base+="-s"+m[4];
-    const sn=String((S.mesoMeta[mid]&&S.mesoMeta[mid].sheetName)||("Hoja"+mid)).replace(/'/g,"''");
     const val=S.store[base];
     data.push({range:"'"+sn+"'!"+colLetter(c)+(r+1),values:[[val==null?"":String(val)]]});
   }
@@ -1242,12 +1339,14 @@ if(S.store["_mesoMeta"])try{S.mesoMeta=JSON.parse(S.store["_mesoMeta"]);const m=
 if(S.store["_mesoWeeks"])try{S.mesoWeeks=JSON.parse(S.store["_mesoWeeks"]);}catch{}
 if(S.store["_driveFile"])try{S.driveFile=JSON.parse(S.store["_driveFile"]);}catch{}
 if(S.store["_sheetMap"])try{S.sheetMap=JSON.parse(S.store["_sheetMap"]);}catch{}
+if(S.store["_noteMap"])try{S.noteMap=JSON.parse(S.store["_noteMap"]);}catch{}
+if(S.store["_ssMap"])try{S.ssMap=JSON.parse(S.store["_ssMap"]);}catch{}
 if(S.store["_lastPos"])try{
   const p=JSON.parse(S.store["_lastPos"]);
   if(S.mesoList.includes(p.meso)){S.meso=p.meso;const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}
   if(+p.week)S.week=+p.week;
 }catch{}
-S.askStart=S.mesoList.length>0&&!!S.store["_mesoMeta"];
+S.askStart=false; // v10.6: la pantalla de selección ya no aparece sola (accesible a mano)
 render();
 setTimeout(syncCloud,800);
 setInterval(()=>{if(!S.syncing)syncCloud();},60000);
