@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.9d</title>
+<title>Training Planner — Felipe v10.10</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -208,7 +208,7 @@ window.S={
   store:{},importMsg:"",
   progEx:0,progTab:"meso",chart:null,chart2:null,
   syncStatus:"idle",syncing:false,
-  driveFile:null,driveStatus:"idle",sheetMap:{},noteMap:{},ssMap:{},
+  driveFile:null,driveStatus:"idle",sheetMap:{},noteMap:{},ssMap:{},syncAllMsg:"",
   askStart:false,startMeso:null,
   reorderMode:false,swapPick:null
 };
@@ -998,6 +998,12 @@ function renderSync(){
     +'<div style="padding:12px 14px;background:#f5f5f3;border-radius:8px;font-size:12px;color:#888;line-height:1.6;margin-top:12px">'
     +'<strong style="color:#1a1a1a">Sincronización automática:</strong><br>'
     +'Tus cargas se guardan solas en la planilla. Los cambios del entrenador aparecen al recargar.</div>'
+    +(S.driveFile&&S.driveFile.mimeType==="application/vnd.google-apps.spreadsheet"
+      ?'<div class="syncard" style="margin-top:12px"><h3>2. Forzar sincronización</h3>'
+       +'<p>Sube al Sheet todas las cargas y observaciones guardadas en la app (útil si algo quedó sin subir).</p>'
+       +'<button onclick="syncAllToSheet()" style="padding:8px 18px;border-radius:8px;border:none;background:#1D9E75;color:#fff;font-size:13px;font-weight:500;cursor:pointer">Sincronizar todo al Sheet</button>'
+       +(S.syncAllMsg?'<p style="margin-top:8px;font-size:12px;color:#1D9E75">'+esc(S.syncAllMsg)+'</p>':'')+'</div>'
+      :'')
     +'</div>';
 }
 
@@ -1016,29 +1022,7 @@ function toggleEx(i){
   if(wasOpen&&S.exp===null&&typeof checkDriveChanges==="function")checkDriveChanges();
 }
 function updKg(d,w,i,v,si){S.store[kgKey(d,w,i,si)]=v;saveStore();_markSheetDirty(S.meso,d,w,i,si);}
-function updNote(d,w,i,v){
-  S.store[noteKey(d,w,i)]=v;saveStore();
-  var diag=[];
-  diag.push("meso="+S.meso+" d="+d+" w="+w+" i="+i);
-  diag.push("driveFile="+(S.driveFile?(S.driveFile.mimeType||"?"):"NULL"));
-  diag.push("isNative="+(!!S.driveFile&&S.driveFile.mimeType==="application/vnd.google-apps.spreadsheet"));
-  var nm=S.noteMap&&S.noteMap[S.meso];
-  diag.push("noteMap["+S.meso+"]="+(nm?("obj/"+Object.keys(nm).length+"claves"):"UNDEFINED"));
-  var key=d+"-"+w+"-"+i;
-  diag.push("celda["+key+"]="+(nm?(nm[key]||"NO-ESTA"):"-"));
-  diag.push("tokenValid="+(typeof _tokenValid==="function"?_tokenValid():"?"));
-  var res=_markNoteDirty(S.meso,d,w,i);
-  diag.push("markNoteDirty="+res);
-  _showDiag(diag.join("\n"));
-}
-function _showDiag(txt){
-  var el=document.getElementById("diagBox");
-  if(!el){el=document.createElement("div");el.id="diagBox";
-    el.style.cssText="position:fixed;bottom:8px;left:8px;right:8px;z-index:9999;background:#111;color:#0f0;font:11px monospace;padding:10px;border-radius:8px;white-space:pre-wrap;max-height:40vh;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.4)";
-    el.onclick=function(){el.remove();};
-    document.body.appendChild(el);}
-  el.textContent="DIAG (toca para cerrar):\n"+txt;
-}
+function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();_markNoteDirty(S.meso,d,w,i);}
 function toggleDone(d,w){const k=doneKey(d,w);if(isDoneVal(S.store[k]))delete S.store[k];else S.store[k]="1";saveStore();render();}
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
 function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
@@ -1226,6 +1210,26 @@ function _markSheetDirty(mid,d,w,i,si){
 }
 
 // Notas: mismo mecanismo, marcadas con prefijo "N#" para distinguir de cargas.
+async function syncAllToSheet(){
+  if(!_isNativeSheet()){S.syncAllMsg="Solo disponible con Google Sheet nativo.";render();return;}
+  let n=0;
+  for(const k of Object.keys(S.store)){
+    let m;
+    if((m=/^kg-(\d+)-(\d+)-(\d+)(?:-s(\d+))?(?:-m(\d+))?$/.exec(k))){
+      const d=+m[1],w=+m[2],i=+m[3],si=m[4],mid=m[5]||"1";
+      if(_markSheetDirty(mid,d,w,i,si===undefined?undefined:+si))n++;
+    }else if((m=/^note-(\d+)-(\d+)-(\d+)-m(\d+)$/.exec(k))){
+      const d=+m[1],w=+m[2],i=+m[3],mid=m[4];
+      if(_markNoteDirty(mid,d,w,i))n++;
+    }
+  }
+  if(!n){S.syncAllMsg="No hay nada pendiente por sincronizar.";render();return;}
+  S.syncAllMsg="Sincronizando "+n+" celda(s)...";render();
+  await _flushSheet();
+  S.syncAllMsg=(S.driveStatus==="error")?"Error al sincronizar. Revisa la conexión (💾) e intenta de nuevo.":"✓ "+n+" celda(s) sincronizadas.";
+  render();
+}
+
 function _markNoteDirty(mid,d,w,i){
   if(!_isNativeSheet())return false;
   const map=S.noteMap[mid];if(!map)return false;
