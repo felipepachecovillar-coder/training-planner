@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.9</title>
+<title>Training Planner — Felipe v10.9d</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -1016,7 +1016,29 @@ function toggleEx(i){
   if(wasOpen&&S.exp===null&&typeof checkDriveChanges==="function")checkDriveChanges();
 }
 function updKg(d,w,i,v,si){S.store[kgKey(d,w,i,si)]=v;saveStore();_markSheetDirty(S.meso,d,w,i,si);}
-function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();_markNoteDirty(S.meso,d,w,i);}
+function updNote(d,w,i,v){
+  S.store[noteKey(d,w,i)]=v;saveStore();
+  var diag=[];
+  diag.push("meso="+S.meso+" d="+d+" w="+w+" i="+i);
+  diag.push("driveFile="+(S.driveFile?(S.driveFile.mimeType||"?"):"NULL"));
+  diag.push("isNative="+(!!S.driveFile&&S.driveFile.mimeType==="application/vnd.google-apps.spreadsheet"));
+  var nm=S.noteMap&&S.noteMap[S.meso];
+  diag.push("noteMap["+S.meso+"]="+(nm?("obj/"+Object.keys(nm).length+"claves"):"UNDEFINED"));
+  var key=d+"-"+w+"-"+i;
+  diag.push("celda["+key+"]="+(nm?(nm[key]||"NO-ESTA"):"-"));
+  diag.push("tokenValid="+(typeof _tokenValid==="function"?_tokenValid():"?"));
+  var res=_markNoteDirty(S.meso,d,w,i);
+  diag.push("markNoteDirty="+res);
+  _showDiag(diag.join("\n"));
+}
+function _showDiag(txt){
+  var el=document.getElementById("diagBox");
+  if(!el){el=document.createElement("div");el.id="diagBox";
+    el.style.cssText="position:fixed;bottom:8px;left:8px;right:8px;z-index:9999;background:#111;color:#0f0;font:11px monospace;padding:10px;border-radius:8px;white-space:pre-wrap;max-height:40vh;overflow:auto;box-shadow:0 2px 12px rgba(0,0,0,.4)";
+    el.onclick=function(){el.remove();};
+    document.body.appendChild(el);}
+  el.textContent="DIAG (toca para cerrar):\n"+txt;
+}
 function toggleDone(d,w){const k=doneKey(d,w);if(isDoneVal(S.store[k]))delete S.store[k];else S.store[k]="1";saveStore();render();}
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
 function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
