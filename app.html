@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.10</title>
+<title>Training Planner — Felipe v10.12</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -60,6 +60,25 @@ const ALL_WEEKS=Array.from({length:10},(_,i)=>({
   phase:i<4?"Acumulación":i===4?"Descarga":i<8?"Intensificación":i===8?"Taper":"Max Week"
 }));
 const WDS=["Lunes","Martes","Miércoles","Jueves","Viernes"];
+// Día de hoy como índice 0=Lunes..6=Domingo (para realce). -1 si fin de semana fuera de rango.
+function todayIdx(){const g=new Date().getDay();return g===0?6:g-1;} // 0=Lun..6=Dom
+// Fecha de inicio del meso actual (ISO yyyy-mm-dd) o null.
+function mesoStartKey(mid){return "_mesoStart-"+mid;}
+function getMesoStart(mid){return S.store[mesoStartKey(mid)]||"";}
+// Semana actual del meso según fecha de inicio, avanzando cada lunes. null si no hay fecha.
+function currentMesoWeek(mid){
+  const iso=getMesoStart(mid);if(!iso)return null;
+  const start=new Date(iso+"T00:00:00");if(isNaN(start))return null;
+  const now=new Date();now.setHours(0,0,0,0);
+  // Lunes de la semana de inicio y lunes de esta semana
+  const monday=d=>{const x=new Date(d);const g=x.getDay();const off=g===0?6:g-1;x.setDate(x.getDate()-off);x.setHours(0,0,0,0);return x;};
+  const ms=monday(start), mn=monday(now);
+  const weeks=Math.round((mn-ms)/(7*86400000));
+  const wk=weeks+1;
+  const nw=S.mesoWeeks[mid]||5;
+  if(wk<1)return null;
+  return wk>nw?null:wk; // fuera de rango del meso → sin realce
+}
 const DEFAULT_DAYNAMES=["Upper Body","Lower A","Upper Push","Upper Pull","Lower B"];
 
 // ── Orden visual de días de semana ────────────────────────────────────────────
@@ -206,7 +225,7 @@ window.S={
   mesoList:["1"],mesoMeta:{},meso:"1",
   mesoWeeks:{"1":10},
   store:{},importMsg:"",
-  progEx:0,progTab:"meso",chart:null,chart2:null,
+  progEx:0,progKey:null,progTab:"meso",chart:null,chart2:null,
   syncStatus:"idle",syncing:false,
   driveFile:null,driveStatus:"idle",sheetMap:{},noteMap:{},ssMap:{},syncAllMsg:"",
   askStart:false,startMeso:null,
@@ -671,24 +690,87 @@ function handleExport(){
 }
 
 // ── Progress ──────────────────────────────────────────────────────────────────
+// Catálogo de todos los ejercicios (todas las posiciones de todos los días) del
+// meso más reciente que los tenga. Clave = "dia:idx". Etiqueta = nombre (NombreDía).
+function exerciseCatalog(){
+  const cat=[];
+  const seen=new Set();
+  // Recorrer días 1..5 en el orden del plan actual
+  const mids=S.mesoList.slice().reverse(); // preferir mesos recientes para nombres
+  for(let d=1;d<=5;d++){
+    // Tomar la lista de ejercicios de ese día del meso más reciente que lo tenga
+    let exsD=null, dayNm="";
+    for(const mid of mids){
+      const pd=S.mesoMeta[mid]&&S.mesoMeta[mid].planData&&S.mesoMeta[mid].planData[d];
+      if(pd&&pd.length){exsD=pd;dayNm=(S.mesoMeta[mid].dayNames&&S.mesoMeta[mid].dayNames[d])||("Día "+d);break;}
+    }
+    if(!exsD)continue;
+    exsD.forEach((ex,idx)=>{
+      const key=d+":"+idx;
+      if(seen.has(key))return;seen.add(key);
+      cat.push({key,day:d,idx,name:ex.name,dayName:dayNm});
+    });
+  }
+  return cat;
+}
+// Reps máximas de una prescripción "3x8-12 @7-9" → 12 ; "1x2-3" → 3 ; "4x8" → 8
+function presReps(pres){
+  const m=/^\s*\d+\s*x\s*([\d]+(?:\s*-\s*[\d]+)?)/i.exec(String(pres||""));
+  if(!m)return null;
+  const parts=m[1].split("-").map(s=>parseInt(s,10)).filter(n=>!isNaN(n));
+  return parts.length?Math.max(...parts):null;
+}
+// Series de una prescripción "3x8-12" → 3
+function presSets(pres){
+  const m=/^\s*(\d+)\s*x/i.exec(String(pres||""));
+  return m?parseInt(m[1],10):null;
+}
+// Tipo de ejercicio según reps máximas: <=5 fuerza, >=6 hipertrofia. null si no se sabe.
+function exerciseType(day,idx){
+  // Buscar una prescripción representativa en el meso más reciente
+  for(const mid of S.mesoList.slice().reverse()){
+    const pd=S.mesoMeta[mid]&&S.mesoMeta[mid].planData&&S.mesoMeta[mid].planData[day];
+    if(!pd||!pd[idx])continue;
+    const weeks=pd[idx].weeks||[];
+    for(const w of weeks){
+      const r=presReps(w);
+      if(r!=null)return r<=5?"fuerza":"hipertrofia";
+    }
+  }
+  return "fuerza"; // por defecto máximos
+}
+
 function buildDatasets(){
-  const exs=S.plan[S.day]||[];
-  const exName=exs[S.progEx]?.name;
-  if(!exName)return[];
-  return S.mesoList.map((mid,mi)=>{
+  // progKey = "dia:idx" global. Fallback al primero del catálogo.
+  const cat=exerciseCatalog();
+  if(!cat.length)return[];
+  let sel=cat.find(c=>c.key===S.progKey)||cat[0];
+  const day=sel.day, exName=sel.name;
+  const type=exerciseType(day,sel.idx);
+  const wantVolume=(type==="hipertrofia");
+  const out=S.mesoList.map((mid,mi)=>{
     const nw=S.mesoWeeks[mid]||5;
-    const mExs=S.mesoMeta[mid]?.planData?.[S.day]||[];
+    const mExs=(S.mesoMeta[mid]&&S.mesoMeta[mid].planData&&S.mesoMeta[mid].planData[day])||[];
+    // localizar el ejercicio por nombre dentro de ese día en cada meso
     const exIdx=mExs.findIndex(e=>e.name===exName);
     const data=Array.from({length:nw},(_,wi)=>{
       if(exIdx<0)return null;
       const base=mid==="1"
-        ?"kg-"+S.day+"-"+(wi+1)+"-"+exIdx
-        :"kg-"+S.day+"-"+(wi+1)+"-"+exIdx+"-m"+mid;
+        ?"kg-"+day+"-"+(wi+1)+"-"+exIdx
+        :"kg-"+day+"-"+(wi+1)+"-"+exIdx+"-m"+mid;
       const v1=num(S.store[base]);
-      return v1!==null&&v1!==0?v1:(num(S.store[base+"-s0"])??null);
+      const kg=(v1!==null&&v1!==0)?v1:(num(S.store[base+"-s0"])??null);
+      if(kg===null)return null;
+      if(!wantVolume)return kg; // fuerza: la carga registrada
+      // volumen = series × reps máx × kg (reps de la prescripción de esa semana)
+      const pres=(mExs[exIdx].weeks||[])[wi]||"";
+      const sets=presSets(pres)||1, reps=presReps(pres)||1;
+      return Math.round(sets*reps*kg);
     });
     return{label:"Meso "+Number(mid),data,color:MC[mi%6],weeks:nw};
   });
+  out._type=type; out._unit=wantVolume?"vol":"kg"; out._name=exName; out._dayName=sel.dayName;
+  return out;
 }
 
 // ── Pantalla inicial: ¿en qué semana estás? ───────────────────────────────────
@@ -781,23 +863,35 @@ function render(){
     if(d==null)return'<button class="dbtn" style="opacity:.35;pointer-events:none">'+wd+'</button>';
     const act=!S.reorderMode&&d===S.day;
     const picked=S.reorderMode&&S.swapPick===pos;
+    const isToday=!S.reorderMode&&pos===todayIdx();
     const bs=picked?'border-color:#BA7517;background:#BA751722;color:#BA7517'
-      :act?'border-color:'+pc+';background:'+pc:'';
+      :act?'border-color:'+pc+';background:'+pc
+      :isToday?'border-color:'+pc+';border-width:1.5px':'';
     return'<button class="dbtn'+(act?' on':'')+'" style="'+bs+'" onclick="tapDayTab('+pos+')">'
-      +wd+'<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">'+(S.reorderMode?dname(d):dname(d))+'</span></button>';
+      +wd+(isToday&&!act?'<span style="color:'+pc+';font-size:9px"> ●</span>':'')+'<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">'+(S.reorderMode?dname(d):dname(d))+'</span></button>';
   }).join('')
     +'</div>'
     +(S.reorderMode?'<p style="font-size:11px;color:#888;margin:4px 0 0;text-align:center">Toca dos días para intercambiarlos. Pulsa ✓ (arriba) cuando termines.</p>':'');
 
   // Week nav
   if(v!=="progress"){
+    const curWk=currentMesoWeek(S.meso); // semana actual según fecha de inicio
     html+='<div class="wknav">'+WEEKS.map(w=>{
       const wpc=PC[w.phase]||"#378ADD";const done=isDoneVal(S.store[doneKey(S.day,w.id)]);const act=w.id===S.week;
-      return'<button class="wkbtn" style="border-color:'+(act?wpc:'#e0dfd8')
+      const isCur=w.id===curWk;
+      return'<button class="wkbtn" style="border-color:'+(act?wpc:isCur?wpc:'#e0dfd8')
+        +';border-width:'+(isCur&&!act?'1.5px':'1px')
         +';background:'+(act?wpc:done?wpc+'25':'transparent')
-        +';color:'+(act?'#fff':done?wpc:'#888')
-        +';font-weight:'+(act?500:400)+'" onclick="setWeek('+w.id+')" title="'+w.phase+'">'+w.label+'</button>';
+        +';color:'+(act?'#fff':done?wpc:isCur?wpc:'#888')
+        +';font-weight:'+(act||isCur?500:400)+'" onclick="setWeek('+w.id+')" title="'+w.phase+(isCur?' · semana actual':'')+'">'+w.label+(isCur&&!act?' ●':'')+'</button>';
     }).join('')+'<button class="pbadge" onclick="openWeekPicker()" title="Cambiar semana/mesociclo" style="background:'+pc+'22;color:'+pc+';border:none;cursor:pointer">'+wk.phase+' ▾</button></div>';
+    // Campo de fecha de inicio del meso (para calcular la semana actual)
+    const startVal=getMesoStart(S.meso);
+    html+='<div style="display:flex;align-items:center;gap:8px;padding:2px 2px 0;font-size:11px;color:#888">'
+      +'<span>Inicio del meso:</span>'
+      +'<input type="date" value="'+startVal+'" onchange="setMesoStart(this.value)" style="font-size:11px;padding:2px 6px;border:.5px solid #ccc;border-radius:6px;background:#f5f5f3;color:#444">'
+      +(curWk?'<span style="color:'+pc+'">▸ hoy: S'+curWk+'</span>':(startVal?'<span style="color:#999">fuera de rango del meso</span>':''))
+      +'</div>';
   }
 
   if(v==="workout"){
@@ -873,8 +967,13 @@ function render(){
 
 // ── Progress view ─────────────────────────────────────────────────────────────
 function renderProgress(exs){
-  if(S.progEx>=exs.length)S.progEx=0;
+  const cat=exerciseCatalog();
+  if(cat.length&&(!S.progKey||!cat.find(c=>c.key===S.progKey)))S.progKey=cat[0].key;
   const datasets=buildDatasets();
+  const unit=datasets._unit||"kg";
+  const type=datasets._type||"fuerza";
+  const uLabel=unit==="vol"?"vol":"kg";
+  const fmt=v=>unit==="vol"?Math.round(v).toLocaleString('es-CL'):v;
   const allVals=datasets.flatMap(d=>d.data).filter(v=>v!==null);
   const hasData=allVals.length>0;
   const gMax=hasData?Math.max(...allVals):0;
@@ -890,8 +989,10 @@ function renderProgress(exs){
   const ptab=S.progTab;
 
   let h='<div style="padding:1rem">';
-  h+='<select style="width:100%;padding:6px 10px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:13px;margin-bottom:.75rem" onchange="setProgEx(this.value)">'
-    +exs.map((ex,i)=>'<option value="'+i+'"'+(i===S.progEx?' selected':'')+'>'+esc(ex.name)+'</option>').join('')+'</select>';
+  h+='<select style="width:100%;padding:6px 10px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:13px;margin-bottom:.5rem" onchange="setProgKey(this.value)">'
+    +cat.map(c=>'<option value="'+c.key+'"'+(c.key===S.progKey?' selected':'')+'>'+esc(c.name)+' ('+esc(c.dayName)+')</option>').join('')+'</select>';
+  // Badge del tipo detectado
+  h+='<div style="margin-bottom:.75rem"><span style="font-size:11px;padding:2px 10px;border-radius:8px;background:'+(type==='fuerza'?'#378ADD22':'#1D9E7522')+';color:'+(type==='fuerza'?'#185FA5':'#0F6E56')+'">'+(type==='fuerza'?'Fuerza · máximos (kg)':'Hipertrofia · volumen (series×reps×kg)')+'</span></div>';
   h+='<div class="ptabs">'
     +'<button class="ptab" onclick="setProgTab(\'meso\')" style="border-bottom:'+(ptab==='meso'?'2px solid #378ADD':'2px solid transparent')+';color:'+(ptab==='meso'?'#378ADD':'#888')+';font-weight:'+(ptab==='meso'?500:400)+'">Por mesociclo</button>'
     +'<button class="ptab" onclick="setProgTab(\'global\')" style="border-bottom:'+(ptab==='global'?'2px solid #378ADD':'2px solid transparent')+';color:'+(ptab==='global'?'#378ADD':'#888')+';font-weight:'+(ptab==='global'?500:400)+'">Global histórico</button>'
@@ -899,34 +1000,36 @@ function renderProgress(exs){
 
   if(!hasData){h+='<p style="text-align:center;color:#888;font-size:13px;padding:2rem 0">Sin cargas registradas aún.</p></div>';return h;}
 
+  const mxLabel=unit==="vol"?"Volumen máximo":"Máximo histórico";
+  const lastLabel=unit==="vol"?"Último volumen":"Última carga";
   h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem">'
-    +'<div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">Máximo histórico</div><div style="font-size:20px;font-weight:500">'+gMax+' kg</div></div>'
+    +'<div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">'+mxLabel+'</div><div style="font-size:20px;font-weight:500">'+fmt(gMax)+' '+uLabel+'</div></div>'
     +'<div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">Progreso total</div><div style="font-size:20px;font-weight:500;color:'+(pct>=0?'#1D9E75':'#e24b4a')+'">'+(pct>=0?'+':'')+pct+'%</div></div>'
-    +'<div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">'+(ptab==='meso'?'Última carga':'Sesiones totales')+'</div><div style="font-size:20px;font-weight:500">'+(ptab==='meso'?lastKg+' kg':totalSessions)+'</div></div>'
+    +'<div style="background:#f5f5f3;border-radius:8px;padding:12px"><div style="font-size:11px;color:#888;margin-bottom:4px">'+(ptab==='meso'?lastLabel:'Sesiones totales')+'</div><div style="font-size:20px;font-weight:500">'+(ptab==='meso'?fmt(lastKg)+' '+uLabel:totalSessions)+'</div></div>'
     +'</div>';
 
   if(ptab==='meso'){
     h+='<div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Progreso por mesociclo</span>'
       +'<div style="display:flex;gap:10px;flex-wrap:wrap">'+datasets.map(ds=>'<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#888"><span style="width:10px;height:2px;background:'+ds.color+';display:inline-block;border-radius:1px"></span><span style="width:8px;height:8px;border-radius:50%;background:'+ds.color+';display:inline-block"></span>'+ds.label+'</span>').join('')+'</div>'
       +'</div><div style="padding:12px 16px;position:relative;height:220px"><canvas id="progChart"></canvas></div></div>';
-    h+='<div class="card"><div class="cardh"><span style="font-size:13px;font-weight:500">Máximo por mesociclo</span></div>'
+    h+='<div class="card"><div class="cardh"><span style="font-size:13px;font-weight:500">'+(unit==="vol"?"Volumen máximo por mesociclo":"Máximo por mesociclo")+'</span></div>'
       +datasets.map((ds,mi)=>{
         const vals=ds.data.filter(v=>v!==null);if(!vals.length)return'';
         const mx=Math.max(...vals);
         const prevVals=mi>0?datasets[mi-1].data.filter(v=>v!==null):[];
         const prev=prevVals.length?Math.max(...prevVals):null;
-        const diff=prev!==null?(mx-prev).toFixed(1):null;
+        const diff=prev!==null?(mx-prev):null;
         return'<div class="histrow"><div style="display:flex;align-items:center;gap:8px">'
           +'<span style="width:8px;height:8px;border-radius:50%;background:'+ds.color+';display:inline-block"></span>'
           +ds.label+'<span style="font-size:11px;color:#888">('+ds.weeks+' sem.)</span></div>'
           +'<div style="display:flex;align-items:center;gap:10px">'
-          +(diff!==null?'<span style="font-size:11px;color:'+(parseFloat(diff)>=0?'#1D9E75':'#e24b4a')+'">'+(parseFloat(diff)>=0?'+':'')+diff+' kg</span>':'')
-          +'<span style="font-weight:500">'+mx+' kg</span></div></div>';
+          +(diff!==null?'<span style="font-size:11px;color:'+(diff>=0?'#1D9E75':'#e24b4a')+'">'+(diff>=0?'+':'')+fmt(diff)+' '+uLabel+'</span>':'')
+          +'<span style="font-weight:500">'+fmt(mx)+' '+uLabel+'</span></div></div>';
       }).join('')+'</div>';
   }else{
     h+='<div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Evolución continua (todas las sesiones)</span></div>'
       +'<div style="padding:12px 16px;position:relative;height:220px"><canvas id="progChart"></canvas></div></div>';
-    h+='<div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">Máximo por mesociclo</span></div>'
+    h+='<div class="card"><div class="cardh"><span style="font-size:12px;font-weight:500;color:#888">'+(unit==="vol"?"Volumen máximo por mesociclo":"Máximo por mesociclo")+'</span></div>'
       +'<div style="padding:12px 16px;position:relative;height:160px"><canvas id="summaryChart"></canvas></div></div>';
   }
   h+='</div>';
@@ -936,6 +1039,11 @@ function renderProgress(exs){
 function initCharts(){
   if(S.view!=='progress')return;
   const datasets=buildDatasets();
+  const unit=datasets._unit||"kg";
+  const uL=unit==="vol"?"":" kg";
+  const fmtN=v=>unit==="vol"?Math.round(v).toLocaleString('es-CL'):v;
+  const axisFmt=v=>unit==="vol"?(v>=1000?(v/1000)+'k':v):(v+' kg');
+  const tipFmt=v=>fmtN(v)+(unit==="vol"?' vol':' kg');
   const allVals=datasets.flatMap(d=>d.data).filter(v=>v!==null);
   if(!allVals.length)return;
   if(S.chart){S.chart.destroy();S.chart=null;}
@@ -958,27 +1066,27 @@ function initCharts(){
     });
     S.chart=new Chart(canvas,{type:'line',data:{labels,datasets:cds},
       options:{responsive:true,maintainAspectRatio:false,
-        plugins:{legend:{display:false},tooltip:{filter:i=>i.raw!==null,callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' kg'}}},
+        plugins:{legend:{display:false},tooltip:{filter:i=>i.raw!==null,callbacks:{label:ctx=>ctx.dataset.label+': '+tipFmt(ctx.raw)}}},
         scales:{x:{grid:{display:false},ticks:{color:'#888',font:{size:11},autoSkip:false}},
-          y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:v=>v+' kg'},beginAtZero:false}}}});
+          y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:axisFmt},beginAtZero:false}}}});
   }else{
     const c1=document.getElementById('progChart');
     if(c1)S.chart=new Chart(c1,{type:'line',data:{labels:globalLabels,datasets:[{
-      label:'Carga',data:globalPoints,borderColor:'rgba(180,178,169,.3)',backgroundColor:'rgba(180,178,169,.3)',
+      label:unit==="vol"?'Volumen':'Carga',data:globalPoints,borderColor:'rgba(180,178,169,.3)',backgroundColor:'rgba(180,178,169,.3)',
       borderWidth:1.5,tension:.3,showLine:true,
       pointBackgroundColor:globalColors,pointBorderColor:globalColors,pointRadius:5,pointHoverRadius:7}]},
       options:{responsive:true,maintainAspectRatio:false,
-        plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' kg'}}},
-        scales:{x:{display:false},y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:v=>v+' kg'},beginAtZero:false}}}});
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+tipFmt(ctx.raw)}}},
+        scales:{x:{display:false},y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:axisFmt},beginAtZero:false}}}});
     setTimeout(()=>{
       const c2=document.getElementById('summaryChart');
       if(c2)S.chart2=new Chart(c2,{type:'bar',data:{
         labels:datasets.map(ds=>ds.label),
         datasets:[{label:'Máximo',data:mesoMaxes,backgroundColor:datasets.map(ds=>ds.color),borderRadius:3}]},
         options:{responsive:true,maintainAspectRatio:false,
-          plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' kg'}}},
+          plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>tipFmt(ctx.raw)}}},
           scales:{x:{grid:{display:false},ticks:{color:'#888',font:{size:11}}},
-            y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:v=>v+' kg'},beginAtZero:false}}}});
+            y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{color:'#888',font:{size:11},callback:axisFmt},beginAtZero:false}}}});
     },50);
   }
 }
@@ -1010,9 +1118,17 @@ function renderSync(){
 // ── Handlers ──────────────────────────────────────────────────────────────────
 function setView(v){S.view=v;S.importMsg="";if(S.chart&&v!=="progress"){S.chart.destroy();S.chart=null;}if(S.chart2&&v!=="progress"){S.chart2.destroy();S.chart2=null;}render();}
 function setDay(d){S.day=d;S.exp=null;render();}
+function setMesoStart(v){S.store[mesoStartKey(S.meso)]=v;saveLocal();render();}
 function openWeekPicker(){S.startMeso=null;S.askStart=true;render();}
 function setWeek(w){S.week=w;S.exp=null;_savePos();render();}
-function setMeso(m){S.meso=m;const mm=S.mesoMeta[m];if(mm?.planData)S.plan=mm.planData;S.exp=null;_savePos();render();}
+function setMeso(m){
+  S.meso=m;const mm=S.mesoMeta[m];if(mm&&mm.planData)S.plan=mm.planData;
+  // Ajustar la semana si quedó fuera del rango del meso nuevo.
+  const nw=S.mesoWeeks[m]||5;
+  if(S.week>nw)S.week=nw;
+  if(S.week<1)S.week=1;
+  S.exp=null;_savePos();render();
+}
 function toggleEx(i){
   const wasOpen=S.exp!==null;
   S.exp=S.exp===i?null:i;
@@ -1026,6 +1142,10 @@ function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();_markNoteDirty(S
 function toggleDone(d,w){const k=doneKey(d,w);if(isDoneVal(S.store[k]))delete S.store[k];else S.store[k]="1";saveStore();render();}
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
 function setProgEx(v){S.progEx=+v;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
+function setProgKey(v){
+  S.progKey=v;S.store["_progKey"]=v;saveLocal();
+  if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();
+}
 function setProgTab(t){S.progTab=t;if(S.chart){S.chart.destroy();S.chart=null;}if(S.chart2){S.chart2.destroy();S.chart2=null;}render();}
 
 // ── Google Drive (Picker + Drive API v3) ──────────────────────────────────────
@@ -1367,6 +1487,7 @@ if(S.store["_driveFile"])try{S.driveFile=JSON.parse(S.store["_driveFile"]);}catc
 if(S.store["_sheetMap"])try{S.sheetMap=JSON.parse(S.store["_sheetMap"]);}catch{}
 if(S.store["_noteMap"])try{S.noteMap=JSON.parse(S.store["_noteMap"]);}catch{}
 if(S.store["_ssMap"])try{S.ssMap=JSON.parse(S.store["_ssMap"]);}catch{}
+if(S.store["_progKey"])S.progKey=S.store["_progKey"];
 if(S.store["_lastPos"])try{
   const p=JSON.parse(S.store["_lastPos"]);
   if(S.mesoList.includes(p.meso)){S.meso=p.meso;const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}
