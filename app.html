@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.13</title>
+<title>Training Planner — Felipe v10.14</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -693,16 +693,21 @@ function handleExport(){
 // Catálogo de todos los ejercicios (todas las posiciones de todos los días) del
 // meso más reciente que los tenga. Clave = "dia:idx". Etiqueta = nombre (NombreDía).
 const MAIN_EXERCISES=[
-  {label:"Sentadilla", match:"sentadilla", exclude:["bulgara"], firstOnly:true},
-  {label:"Press banca", match:"press banca", exclude:["inclinado","smith"]},
-  {label:"Press hombro", match:"press hombro", exclude:[]},
-  {label:"Peso muerto", match:"peso muerto", exclude:[]},
-  {label:"Dominadas", match:"dominadas", exclude:[]}
+  {label:"Sentadilla", match:["sentadilla","squat"], exclude:["bulgara","hack"], firstOnly:true},
+  {label:"Press banca", match:["press banca"], exclude:["inclinado","smith"]},
+  {label:"Press hombro", match:["press hombro"], exclude:[]},
+  {label:"Peso muerto", match:["peso muerto"], exclude:["rdl","sl ","single","unilat"], firstOnly:true},
+  {label:"Dominadas", match:["dominadas"], exclude:[]}
 ];
 function _norm(s){return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();}
 function isMainExercise(name){
   const n=_norm(name);
-  return MAIN_EXERCISES.find(me=>n.startsWith(me.match)&&!me.exclude.some(x=>n.includes(x)))||null;
+  if(!n)return null;
+  return MAIN_EXERCISES.find(me=>{
+    const matches=me.match.some(m=>n.startsWith(m));
+    if(!matches)return false;
+    return !me.exclude.some(x=>n.includes(x));
+  })||null;
 }
 
 function exerciseCatalog(){
@@ -765,35 +770,44 @@ function exerciseType(day,idx){
 }
 
 function buildDatasets(){
-  // progKey = "dia:idx" global. Fallback al primero del catálogo.
   const cat=exerciseCatalog();
   if(!cat.length)return[];
   let sel=cat.find(c=>c.key===S.progKey)||cat[0];
-  const day=sel.day, exName=sel.name;
-  const type=exerciseType(day,sel.idx);
+  const mainLabel=sel.main||null; // ej. "Sentadilla"
+  const type=exerciseType(sel.day,sel.idx);
   const wantVolume=(type==="hipertrofia");
+  // Localiza el ejercicio principal en un meso: recorre TODOS los días y devuelve
+  // {day,idx} de la primera coincidencia por matcher (nombres pueden variar: Squat/Sentadilla).
+  function locate(mid){
+    for(let d=1;d<=5;d++){
+      const pd=S.mesoMeta[mid]&&S.mesoMeta[mid].planData&&S.mesoMeta[mid].planData[d];
+      if(!pd)continue;
+      for(let i=0;i<pd.length;i++){
+        const me=isMainExercise(pd[i].name);
+        if(me&&me.label===mainLabel)return{day:d,idx:i,ex:pd[i]};
+      }
+    }
+    return null;
+  }
   const out=S.mesoList.map((mid,mi)=>{
     const nw=S.mesoWeeks[mid]||5;
-    const mExs=(S.mesoMeta[mid]&&S.mesoMeta[mid].planData&&S.mesoMeta[mid].planData[day])||[];
-    // localizar el ejercicio por nombre dentro de ese día en cada meso
-    const exIdx=mExs.findIndex(e=>e.name===exName);
+    const loc=mainLabel?locate(mid):null;
     const data=Array.from({length:nw},(_,wi)=>{
-      if(exIdx<0)return null;
+      if(!loc)return null;
       const base=mid==="1"
-        ?"kg-"+day+"-"+(wi+1)+"-"+exIdx
-        :"kg-"+day+"-"+(wi+1)+"-"+exIdx+"-m"+mid;
+        ?"kg-"+loc.day+"-"+(wi+1)+"-"+loc.idx
+        :"kg-"+loc.day+"-"+(wi+1)+"-"+loc.idx+"-m"+mid;
       const v1=num(S.store[base]);
       const kg=(v1!==null&&v1!==0)?v1:(num(S.store[base+"-s0"])??null);
       if(kg===null)return null;
-      if(!wantVolume)return kg; // fuerza: la carga registrada
-      // volumen = series × reps máx × kg (reps de la prescripción de esa semana)
-      const pres=(mExs[exIdx].weeks||[])[wi]||"";
+      if(!wantVolume)return kg;
+      const pres=(loc.ex.weeks||[])[wi]||"";
       const sets=presSets(pres)||1, reps=presReps(pres)||1;
       return Math.round(sets*reps*kg);
     });
     return{label:"Meso "+Number(mid),data,color:MC[mi%6],weeks:nw};
   });
-  out._type=type; out._unit=wantVolume?"vol":"kg"; out._name=exName; out._dayName=sel.dayName;
+  out._type=type; out._unit=wantVolume?"vol":"kg"; out._name=sel.main||sel.name; out._dayName=sel.dayName;
   return out;
 }
 
