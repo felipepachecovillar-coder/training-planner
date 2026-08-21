@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.12</title>
+<title>Training Planner — Felipe v10.13</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -692,13 +692,25 @@ function handleExport(){
 // ── Progress ──────────────────────────────────────────────────────────────────
 // Catálogo de todos los ejercicios (todas las posiciones de todos los días) del
 // meso más reciente que los tenga. Clave = "dia:idx". Etiqueta = nombre (NombreDía).
+const MAIN_EXERCISES=[
+  {label:"Sentadilla", match:"sentadilla", exclude:["bulgara"], firstOnly:true},
+  {label:"Press banca", match:"press banca", exclude:["inclinado","smith"]},
+  {label:"Press hombro", match:"press hombro", exclude:[]},
+  {label:"Peso muerto", match:"peso muerto", exclude:[]},
+  {label:"Dominadas", match:"dominadas", exclude:[]}
+];
+function _norm(s){return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();}
+function isMainExercise(name){
+  const n=_norm(name);
+  return MAIN_EXERCISES.find(me=>n.startsWith(me.match)&&!me.exclude.some(x=>n.includes(x)))||null;
+}
+
 function exerciseCatalog(){
   const cat=[];
   const seen=new Set();
-  // Recorrer días 1..5 en el orden del plan actual
-  const mids=S.mesoList.slice().reverse(); // preferir mesos recientes para nombres
+  const usedMain=new Set(); // para firstOnly: un solo item por ejercicio principal
+  const mids=S.mesoList.slice().reverse();
   for(let d=1;d<=5;d++){
-    // Tomar la lista de ejercicios de ese día del meso más reciente que lo tenga
     let exsD=null, dayNm="";
     for(const mid of mids){
       const pd=S.mesoMeta[mid]&&S.mesoMeta[mid].planData&&S.mesoMeta[mid].planData[d];
@@ -706,9 +718,15 @@ function exerciseCatalog(){
     }
     if(!exsD)continue;
     exsD.forEach((ex,idx)=>{
+      // Solo ejercicios principales
+      const me=isMainExercise(ex.name);
+      if(!me)return;
+      // firstOnly: si ya se agregó este principal (ej. Sentadilla), omitir repeticiones
+      if(me.firstOnly&&usedMain.has(me.label))return;
+      usedMain.add(me.label);
       const key=d+":"+idx;
       if(seen.has(key))return;seen.add(key);
-      cat.push({key,day:d,idx,name:ex.name,dayName:dayNm});
+      cat.push({key,day:d,idx,name:ex.name,dayName:dayNm,main:me.label});
     });
   }
   return cat;
@@ -727,7 +745,13 @@ function presSets(pres){
 }
 // Tipo de ejercicio según reps máximas: <=5 fuerza, >=6 hipertrofia. null si no se sabe.
 function exerciseType(day,idx){
-  // Buscar una prescripción representativa en el meso más reciente
+  // Los ejercicios principales siempre se siguen por máximos (kg), sin importar reps.
+  // Buscar el nombre en el meso más reciente que tenga ese día/idx
+  for(const mid of S.mesoList.slice().reverse()){
+    const pd=S.mesoMeta[mid]&&S.mesoMeta[mid].planData&&S.mesoMeta[mid].planData[day];
+    if(pd&&pd[idx]){if(isMainExercise(pd[idx].name))return "fuerza";break;}
+  }
+  // Resto: por reps máximas
   for(const mid of S.mesoList.slice().reverse()){
     const pd=S.mesoMeta[mid]&&S.mesoMeta[mid].planData&&S.mesoMeta[mid].planData[day];
     if(!pd||!pd[idx])continue;
@@ -737,7 +761,7 @@ function exerciseType(day,idx){
       if(r!=null)return r<=5?"fuerza":"hipertrofia";
     }
   }
-  return "fuerza"; // por defecto máximos
+  return "fuerza";
 }
 
 function buildDatasets(){
@@ -855,9 +879,10 @@ function render(){
     +'<button class="vbtn'+(v==="sync"?" on":"")+'" onclick="setView(\'sync\')">Sync</button>'
     +'</div></div></div>';
 
-  // Day nav
+  // Day nav (oculto en Progreso: allí se navega por ejercicio, no por día)
   const dname=n=>getDayName(n).replace(/'/g,"&#39;");
   const dOrder=getDayOrder();
+  if(v!=="progress"){
   html+='<div class="daynav">'+WDS.map((wd,pos)=>{
     const d=dOrder[pos];
     if(d==null)return'<button class="dbtn" style="opacity:.35;pointer-events:none">'+wd+'</button>';
@@ -872,6 +897,7 @@ function render(){
   }).join('')
     +'</div>'
     +(S.reorderMode?'<p style="font-size:11px;color:#888;margin:4px 0 0;text-align:center">Toca dos días para intercambiarlos. Pulsa ✓ (arriba) cuando termines.</p>':'');
+  }
 
   // Week nav
   if(v!=="progress"){
