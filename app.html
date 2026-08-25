@@ -817,7 +817,7 @@ function _lastPos(){
   try{const p=JSON.parse(S.store["_lastPos"]||"{}");return{meso:p.meso||"",week:+p.week||0};}
   catch{return{meso:"",week:0};}
 }
-function _savePos(){S.store["_lastPos"]=JSON.stringify({meso:S.meso,week:S.week});saveLocal();}
+function _savePos(){S.store["_lastPos"]=JSON.stringify({meso:S.meso,week:S.week,day:S.day});saveLocal();}
 function startSelMeso(m){S.startMeso=m;render();}
 
 function chooseStart(mid,w){
@@ -1131,7 +1131,7 @@ function renderSync(){
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 function setView(v){S.view=v;S.importMsg="";if(S.chart&&v!=="progress"){S.chart.destroy();S.chart=null;}if(S.chart2&&v!=="progress"){S.chart2.destroy();S.chart2=null;}render();}
-function setDay(d){S.day=d;S.exp=null;render();}
+function setDay(d){S.day=d;S.exp=null;_savePos();render();}
 function setMesoStart(v){S.store[mesoStartKey(S.meso)]=v;S.showStartInput=false;saveLocal();render();}
 function showStartDate(){S.showStartInput=true;render();}
 function openWeekPicker(){S.startMeso=null;S.askStart=true;render();}
@@ -1507,6 +1507,7 @@ if(S.store["_lastPos"])try{
   const p=JSON.parse(S.store["_lastPos"]);
   if(S.mesoList.includes(p.meso)){S.meso=p.meso;const m=S.mesoMeta[S.meso];if(m?.planData)S.plan=m.planData;}
   if(+p.week)S.week=+p.week;
+  if(+p.day&&S.plan[+p.day])S.day=+p.day; // restaurar el día donde estabas
 }catch{}
 S.askStart=false; // v10.6: la pantalla de selección ya no aparece sola (accesible a mano)
 render();
