@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.18</title>
+<title>Training Planner — Felipe v10.19</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -18,8 +18,8 @@ button,select,input{font-family:inherit}
 .vtog{display:flex;gap:4px;padding:0 16px 10px;border-bottom:.5px solid #e0dfd8}
 .vbtn{flex:1;padding:7px 12px;border:none;background:#f5f5f3;color:#888;font-size:13px;cursor:pointer;border-radius:8px}
 .vbtn.on{background:#e0dfd8;color:#1a1a1a;font-weight:500}
-.daynav{display:flex;gap:4px;padding:8px 16px;border-bottom:.5px solid #e0dfd8;overflow-x:auto}
-.dbtn{padding:4px 12px;border-radius:8px;border:.5px solid #e0dfd8;background:transparent;color:#888;font-size:12px;white-space:nowrap;cursor:pointer}
+.daynav{display:flex;gap:3px;padding:6px 12px;border-bottom:.5px solid #e0dfd8;overflow-x:auto}
+.dbtn{padding:4px 8px;border-radius:8px;border:.5px solid #e0dfd8;background:transparent;color:#888;font-size:11px;white-space:nowrap;cursor:pointer;flex:1;text-align:center}
 .dbtn.on{color:#fff;font-weight:500}
 .wknav{display:flex;align-items:center;gap:3px;padding:8px 16px;border-bottom:.5px solid #e0dfd8;overflow-x:auto}
 .wkbtn{min-width:32px;height:28px;border-radius:8px;border:.5px solid #e0dfd8;background:transparent;color:#888;font-size:11px;cursor:pointer}
@@ -226,7 +226,7 @@ window.S={
   mesoList:["1"],mesoMeta:{},meso:"1",
   mesoWeeks:{"1":10},
   store:{},importMsg:"",
-  progEx:0,progKey:null,progTab:"meso",chart:null,chart2:null,
+  progEx:0,progKey:null,progTab:"meso",chart:null,chart2:null,showStartInput:false,
   syncStatus:"idle",syncing:false,
   driveFile:null,driveStatus:"idle",sheetMap:{},noteMap:{},ssMap:{},syncAllMsg:"",
   askStart:false,startMeso:null,
@@ -909,7 +909,7 @@ function render(){
       :act?'border-color:'+pc+';background:'+pc
       :isToday?'border-color:'+pc+';border-width:1.5px':'';
     return'<button class="dbtn'+(act?' on':'')+'" style="'+bs+'" onclick="tapDayTab('+pos+')">'
-      +wd+(isToday&&!act?'<span style="color:'+pc+';font-size:9px"> ●</span>':'')+'<span style="opacity:.7;font-size:10px;display:block;line-height:1.2">'+(S.reorderMode?dname(d):dname(d))+'</span></button>';
+      +wd+(isToday&&!act?'<span style="color:'+pc+';font-size:8px"> ●</span>':'')+'<span style="opacity:.7;font-size:9px;display:block;line-height:1.15">'+dname(d)+'</span></button>';
   }).join('')
     +'</div>'
     +(S.reorderMode?'<p style="font-size:11px;color:#888;margin:4px 0 0;text-align:center">Toca dos días para intercambiarlos. Pulsa ✓ (arriba) cuando termines.</p>':'');
@@ -927,13 +927,23 @@ function render(){
         +';color:'+(act?'#fff':done?wpc:isCur?wpc:'#888')
         +';font-weight:'+(act||isCur?500:400)+'" onclick="setWeek('+w.id+')" title="'+w.phase+(isCur?' · semana actual':'')+'">'+w.label+(isCur&&!act?' ●':'')+'</button>';
     }).join('')+'<button class="pbadge" onclick="openWeekPicker()" title="Cambiar semana/mesociclo" style="background:'+pc+'22;color:'+pc+';border:none;cursor:pointer">'+wk.phase+' ▾</button></div>';
-    // Campo de fecha de inicio del meso (para calcular la semana actual)
+    // Fecha de inicio del meso: oculta si no está puesta (solo un enlace discreto).
     const startVal=getMesoStart(S.meso);
-    html+='<div style="display:flex;align-items:center;gap:8px;padding:2px 2px 0;font-size:11px;color:#888">'
-      +'<span>Inicio del meso:</span>'
-      +'<input type="date" value="'+startVal+'" onchange="setMesoStart(this.value)" style="font-size:11px;padding:2px 6px;border:.5px solid #ccc;border-radius:6px;background:#f5f5f3;color:#444">'
-      +(curWk?'<span style="color:'+pc+'">▸ hoy: S'+curWk+'</span>':(startVal?'<span style="color:#999">fuera de rango del meso</span>':''))
-      +'</div>';
+    if(startVal){
+      html+='<div style="display:flex;align-items:center;gap:8px;padding:2px 2px 0;font-size:11px;color:#888">'
+        +'<span>Inicio del meso:</span>'
+        +'<input type="date" value="'+startVal+'" onchange="setMesoStart(this.value)" style="font-size:11px;padding:2px 6px;border:.5px solid #ccc;border-radius:6px;background:#f5f5f3;color:#444">'
+        +(curWk?'<span style="color:'+pc+'">▸ hoy: S'+curWk+'</span>':'<span style="color:#999">fuera de rango</span>')
+        +'<button onclick="setMesoStart(\'\')" title="Quitar fecha" style="border:none;background:transparent;color:#bbb;cursor:pointer;font-size:13px;padding:0 2px">✕</button>'
+        +'</div>';
+    }else if(S.showStartInput){
+      html+='<div style="display:flex;align-items:center;gap:8px;padding:2px 2px 0;font-size:11px;color:#888">'
+        +'<span>Inicio del meso:</span>'
+        +'<input type="date" value="" onchange="setMesoStart(this.value)" style="font-size:11px;padding:2px 6px;border:.5px solid #ccc;border-radius:6px;background:#f5f5f3;color:#444">'
+        +'</div>';
+    }else{
+      html+='<div style="padding:2px 2px 0"><button onclick="showStartDate()" style="border:none;background:transparent;color:'+pc+';cursor:pointer;font-size:11px;padding:2px 0">＋ fecha de inicio del meso</button></div>';
+    }
   }
 
   if(v==="workout"){
@@ -1122,7 +1132,8 @@ function renderSync(){
 // ── Handlers ──────────────────────────────────────────────────────────────────
 function setView(v){S.view=v;S.importMsg="";if(S.chart&&v!=="progress"){S.chart.destroy();S.chart=null;}if(S.chart2&&v!=="progress"){S.chart2.destroy();S.chart2=null;}render();}
 function setDay(d){S.day=d;S.exp=null;render();}
-function setMesoStart(v){S.store[mesoStartKey(S.meso)]=v;saveLocal();render();}
+function setMesoStart(v){S.store[mesoStartKey(S.meso)]=v;S.showStartInput=false;saveLocal();render();}
+function showStartDate(){S.showStartInput=true;render();}
 function openWeekPicker(){S.startMeso=null;S.askStart=true;render();}
 function setWeek(w){S.week=w;S.exp=null;_savePos();render();}
 function setMeso(m){
