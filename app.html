@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.17</title>
+<title>Training Planner — Felipe v10.18</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
@@ -13,9 +13,10 @@
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f5f3;color:#1a1a1a;min-height:100vh}
 .app{max-width:720px;margin:0 auto;background:#fff;min-height:100vh;border-left:.5px solid #e0dfd8;border-right:.5px solid #e0dfd8}
 button,select,input{font-family:inherit}
-.hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 12px;border-bottom:.5px solid #e0dfd8}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 8px;gap:8px}
 .vtog{display:flex;border-radius:8px;overflow:hidden;border:.5px solid #ccc}
-.vbtn{padding:5px 12px;border:none;background:transparent;color:#888;font-size:12px;cursor:pointer}
+.vtog{display:flex;gap:4px;padding:0 16px 10px;border-bottom:.5px solid #e0dfd8}
+.vbtn{flex:1;padding:7px 12px;border:none;background:#f5f5f3;color:#888;font-size:13px;cursor:pointer;border-radius:8px}
 .vbtn.on{background:#e0dfd8;color:#1a1a1a;font-weight:500}
 .daynav{display:flex;gap:4px;padding:8px 16px;border-bottom:.5px solid #e0dfd8;overflow-x:auto}
 .dbtn{padding:4px 12px;border-radius:8px;border:.5px solid #e0dfd8;background:transparent;color:#888;font-size:12px;white-space:nowrap;cursor:pointer}
@@ -26,7 +27,7 @@ button,select,input{font-family:inherit}
 .thead{display:flex;padding:5px 16px;background:#f5f5f3;border-bottom:.5px solid #e0dfd8}
 .th{font-size:11px;color:#888;font-weight:500}
 .exrow{border-bottom:.5px solid #e0dfd8}
-.exmain{display:flex;align-items:center;padding:7px 16px;cursor:pointer}
+.exmain{display:flex;align-items:flex-start;padding:9px 16px;cursor:pointer;gap:2px}
 .exmain:hover{background:#f9f9f7}
 .exmain.exp{background:#f5f5f3}
 .exmain.skip{opacity:.4;cursor:default}
@@ -506,7 +507,6 @@ async function handleImport(file,opts={}){
     const wb=XLSX.read(buf,{type:"array"});
     S.mesoList=[];S.mesoMeta={};S.mesoWeeks={};S.sheetMap={};S.noteMap={};S.ssMap={};
 
-    let _meso1Rows=null; // rows crudas del Meso 1 para la ingesta legada
     wb.SheetNames.forEach((sn,si)=>{
       const mid=String(si+1);
       const ws=wb.Sheets[sn];
@@ -516,7 +516,6 @@ async function handleImport(file,opts={}){
       let offR=0,offC=0;
       try{const rg=XLSX.utils.decode_range(ws["!ref"]||"A1");offR=rg.s.r;offC=rg.s.c;}catch{}
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
-      if(mid==="1")_meso1Rows=rows;
       const blocks=parseDayBlocks(rows);
       if(!blocks.length)return;
 
@@ -627,7 +626,6 @@ async function handleImport(file,opts={}){
     S.store["_sheetMap"]=JSON.stringify(S.sheetMap);
     S.store["_noteMap"]=JSON.stringify(S.noteMap);
     S.store["_ssMap"]=JSON.stringify(S.ssMap);
-    _ingestMeso1Loads(_meso1Rows); // extraer cargas de principales del Meso 1 (formato legado)
     saveStore();
     if(!silent)S.importMsg="ok:✓ "+file.name+" — "+S.mesoList.length+" mesociclo(s)";
   }catch(e){
@@ -711,81 +709,6 @@ function isMainExercise(name){
     if(!matches)return false;
     return !me.exclude.some(x=>n.includes(x));
   })||null;
-}
-
-// Extrae la carga (kg) de una celda legada del Meso 1: "20(10)"→20, "22,5(10)"→22.5,
-// "60"→60, "30 (8)"→30. El paréntesis son reps y se descarta. null si no hay número.
-function _legacyLoad(cell){
-  let s=String(cell==null?"":cell).trim();
-  if(!s)return null;
-  s=s.split("(")[0].trim();          // descartar reps entre paréntesis
-  s=s.replace(",",".");              // coma decimal → punto
-  const m=/-?\d+(?:\.\d+)?/.exec(s); // primer número
-  if(!m)return null;
-  const v=parseFloat(m[0]);
-  return (isFinite(v)&&v>0)?v:null;   // 0 o vacío = sin carga
-}
-
-// Ingesta de cargas de los principales del Meso 1 (formato legado). Lee las filas
-// crudas: cada principal puede ocupar varias filas (series ascendentes) y las cargas
-// están en las columnas de semana (tras "Descanso"). Toma el MÁXIMO por semana.
-function _ingestMeso1Loads(rows){
-  if(!rows||!rows.length)return;
-  const meta=S.mesoMeta&&S.mesoMeta["1"];
-  if(!meta||!meta.planData)return;
-
-  // Localizar bloques: fila cabecera con "Series" y "Repeticiones". La columna de
-  // la primera semana es la que sigue a "Descanso"; las semanas son de ahí en adelante.
-  const blocks=[]; // {headRow, dayName, weekStart}
-  for(let r=0;r<rows.length;r++){
-    const row=rows[r]||[];
-    const j=row.map(c=>String(c).trim().toLowerCase());
-    const si=j.findIndex(x=>x==="series");
-    const ri=j.findIndex(x=>x==="repeticiones");
-    if(si>=0&&ri>=0){
-      // buscar "descanso"; la semana 1 empieza en la columna siguiente
-      let di=j.findIndex(x=>x==="descanso");
-      const weekStart=di>=0?di+1:si+4;
-      blocks.push({headRow:r,dayName:String(row[0]||"").trim(),weekStart});
-    }
-  }
-  if(!blocks.length)return;
-
-  // Mapear cada bloque al día correspondiente en planData por nombre de día.
-  // planData días 1..5 en orden; los bloques están en el mismo orden de aparición.
-  const dayIds=Object.keys(meta.planData);
-  blocks.forEach((blk,bi)=>{
-    const dayId=dayIds[bi]; if(!dayId)return;
-    const exs=meta.planData[dayId]||[];
-    const nextHead=(bi+1<blocks.length)?blocks[bi+1].headRow:rows.length;
-    // Para cada ejercicio principal del día, encontrar su fila inicial y sus filas-serie.
-    exs.forEach((ex,idx)=>{
-      if(!isMainExercise(ex.name))return;
-      // localizar la fila donde aparece el nombre del ejercicio (col 0), dentro del bloque
-      let startRow=-1;
-      for(let r=blk.headRow+1;r<nextHead;r++){
-        if(_norm(String((rows[r]||[])[0]||""))===_norm(ex.name)){startRow=r;break;}
-      }
-      if(startRow<0)return;
-      // filas-serie: desde startRow hasta la siguiente fila con nombre en col 0 (otro ejercicio)
-      let endRow=startRow+1;
-      for(;endRow<nextHead;endRow++){
-        const nm=String((rows[endRow]||[])[0]||"").trim();
-        if(nm)break; // empieza otro ejercicio
-      }
-      // por cada semana (columna weekStart..), tomar el máximo entre las filas-serie
-      const nw=S.mesoWeeks["1"]||5;
-      for(let w=0;w<nw;w++){
-        const col=blk.weekStart+w;
-        let mx=null;
-        for(let r=startRow;r<endRow;r++){
-          const v=_legacyLoad((rows[r]||[])[col]);
-          if(v!==null)mx=(mx===null)?v:Math.max(mx,v);
-        }
-        if(mx!==null)S.store["kg-"+dayId+"-"+(w+1)+"-"+idx]=String(mx);
-      }
-    });
-  });
 }
 
 function exerciseCatalog(){
@@ -952,24 +875,25 @@ function render(){
   const v=S.view;
 
   let html='<div class="hdr">'
-    +'<div><span style="font-weight:500;font-size:16px">Training Planner</span>'
-    +'<span style="font-size:12px;color:#888;margin-left:8px">Felipe Pacheco</span></div>'
-    +'<div style="display:flex;align-items:center;gap:8px">'
-    +'<button id="syncIcon" onclick="syncCloud()" style="border:none;background:transparent;cursor:pointer;font-size:16px;padding:2px 4px;color:'
+    +'<div style="display:flex;align-items:center;gap:6px;min-width:0">'
+    +'<span style="font-weight:600;font-size:15px;white-space:nowrap">Training Planner</span></div>'
+    +'<div style="display:flex;align-items:center;gap:6px">'
+    +'<button id="syncIcon" onclick="syncCloud()" style="border:none;background:transparent;cursor:pointer;font-size:15px;padding:2px 3px;color:'
     +(S.syncStatus==="ok"?"#1D9E75":S.syncStatus==="error"?"#e24b4a":"#888")+'">'
     +(S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻")+'</button>'
-    +'<button id="editIcon" onclick="toggleReorder()" title="'+(S.reorderMode?"Listo (reordenar días)":"Reordenar días")+'" style="border:none;background:transparent;cursor:pointer;font-size:15px;padding:2px 4px;color:'+(S.reorderMode?"#BA7517":"#888")+'">'+(S.reorderMode?'✓':'✏️')+'</button>'
-    +(S.driveFile?'<button id="driveIcon" onclick="reconnectDrive()" title="Drive: '+(S.driveFile.name||"").replace(/"/g,"&quot;")+' — toca para reconectar/sincronizar" style="border:none;background:transparent;cursor:pointer;font-size:12px;padding:2px 4px;color:'+(S.driveStatus==="ok"?"#1D9E75":S.driveStatus==="syncing"?"#888":S.driveStatus==="error"?"#e24b4a":"#888")+'">'+(S.driveStatus==="ok"?"💾✓":S.driveStatus==="syncing"?"💾↻":S.driveStatus==="error"?"💾✕":"💾")+'</button>':'')
+    +'<button id="editIcon" onclick="toggleReorder()" title="'+(S.reorderMode?"Listo (reordenar días)":"Reordenar días")+'" style="border:none;background:transparent;cursor:pointer;font-size:14px;padding:2px 3px;color:'+(S.reorderMode?"#BA7517":"#888")+'">'+(S.reorderMode?'✓':'✏️')+'</button>'
+    +(S.driveFile?'<button id="driveIcon" onclick="reconnectDrive()" title="Drive: '+(S.driveFile.name||"").replace(/"/g,"&quot;")+' — toca para reconectar/sincronizar" style="border:none;background:transparent;cursor:pointer;font-size:12px;padding:2px 3px;color:'+(S.driveStatus==="ok"?"#1D9E75":S.driveStatus==="syncing"?"#888":S.driveStatus==="error"?"#e24b4a":"#888")+'">'+(S.driveStatus==="ok"?"💾✓":S.driveStatus==="syncing"?"💾↻":S.driveStatus==="error"?"💾✕":"💾")+'</button>':'')
     +(S.mesoList.length>1
       ?'<select onchange="setMeso(this.value)" style="padding:4px 8px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:12px">'
        +S.mesoList.map((m,i)=>'<option value="'+m+'"'+(m===S.meso?' selected':'')+'>'
          +'Meso '+m+(i===S.mesoList.length-1?' ★':'')+'</option>').join('')+'</select>'
       :'<span style="font-size:11px;color:#888">Meso '+S.meso+'</span>')
+    +'</div></div>'
     +'<div class="vtog">'
     +'<button class="vbtn'+(v==="workout"?" on":"")+'" onclick="setView(\'workout\')">Entreno</button>'
     +'<button class="vbtn'+(v==="progress"?" on":"")+'" onclick="setView(\'progress\')">Progreso</button>'
     +'<button class="vbtn'+(v==="sync"?" on":"")+'" onclick="setView(\'sync\')">Sync</button>'
-    +'</div></div></div>';
+    +'</div>';
 
   // Day nav (oculto en Progreso: allí se navega por ejercicio, no por día)
   const dname=n=>getDayName(n).replace(/'/g,"&#39;");
@@ -1018,11 +942,9 @@ function render(){
       +'<input type="text" value="'+getDayName(S.day).replace(/"/g,'&quot;')+'" '
       +'onchange="setDayName('+S.day+',this.value)" placeholder="Nombre del entrenamiento..."></div>';
     html+='<div class="thead">'
-      +'<span class="th" style="width:38%">Ejercicio</span>'
-      +'<span class="th" style="width:16%">Detalles</span>'
-      +'<span class="th" style="width:12%">Desc.</span>'
-      +'<span class="th" style="width:20%">Prescripción</span>'
-      +'<span class="th" style="width:14%">kg</span></div>';
+      +'<span class="th" style="width:46%">Ejercicio</span>'
+      +'<span class="th" style="width:34%">Prescripción</span>'
+      +'<span class="th" style="width:20%;text-align:right">kg</span></div>';
 
     html+=exs.map((ex,i)=>{
       const pres=ex.weeks[S.week-1]||"-";
@@ -1064,12 +986,14 @@ function render(){
           +'</div>';
       }
 
+      // Detalles/descanso: mostrar como sub-línea bajo el nombre solo si existen
+      const meta2=[ex.details,ex.rest].filter(x=>x&&x!=='—').join(' · ');
       return'<div class="exrow">'
-        +'<div class="exmain'+(skip?' skip':'')+(isExp?' exp':'')+'" onclick="'+(skip?'':'toggleEx('+i+')')+'"><span style="width:38%;font-size:13px">'+esc(ex.name)+'</span>'
-        +'<span style="width:16%;font-size:11px;color:#888">'+esc(ex.details||'—')+'</span>'
-        +'<span style="width:12%;font-size:11px;color:#888">'+esc(ex.rest||'—')+'</span>'
-        +'<span style="width:20%;font-size:13px;font-weight:500;color:'+(skip?'#888':pc)+'">'+(skip?'—':esc(pres))+'</span>'
-        +'<span style="width:14%;font-size:12px">'+(kgDisplay?'<span style="color:'+pc+';font-weight:500">'+esc(kgDisplay)+' kg</span>':'<span style="color:#ccc">—</span>')+'</span></div>'
+        +'<div class="exmain'+(skip?' skip':'')+(isExp?' exp':'')+'" onclick="'+(skip?'':'toggleEx('+i+')')+'">'
+        +'<span style="width:46%;font-size:13px;line-height:1.3">'+esc(ex.name)
+        +(meta2?'<span style="display:block;font-size:10px;color:#aaa;font-weight:400">'+esc(meta2)+'</span>':'')+'</span>'
+        +'<span style="width:34%;font-size:13px;font-weight:500;color:'+(skip?'#bbb':pc)+';padding-right:8px;line-height:1.3">'+(skip?'—':esc(pres))+'</span>'
+        +'<span style="width:20%;font-size:13px;text-align:right;line-height:1.3">'+(kgDisplay?'<span style="color:'+pc+';font-weight:600;white-space:nowrap">'+esc(kgDisplay)+'<span style="font-size:10px;color:#999;font-weight:400"> kg</span></span>':'<span style="color:#ccc">—</span>')+'</span></div>'
         +expHtml+'</div>';
     }).join('');
 
