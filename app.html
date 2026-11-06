@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Training Planner — Felipe v10.19</title>
+<title>Training Planner — Felipe v10.20</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
 <script src="https://apis.google.com/js/api.js" defer></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
@@ -883,6 +884,7 @@ function render(){
     +(S.syncStatus==="ok"?"✓":S.syncStatus==="error"?"✕":"↻")+'</button>'
     +'<button id="editIcon" onclick="toggleReorder()" title="'+(S.reorderMode?"Listo (reordenar días)":"Reordenar días")+'" style="border:none;background:transparent;cursor:pointer;font-size:14px;padding:2px 3px;color:'+(S.reorderMode?"#BA7517":"#888")+'">'+(S.reorderMode?'✓':'✏️')+'</button>'
     +(S.driveFile?'<button id="driveIcon" onclick="reconnectDrive()" title="Drive: '+(S.driveFile.name||"").replace(/"/g,"&quot;")+' — toca para reconectar/sincronizar" style="border:none;background:transparent;cursor:pointer;font-size:12px;padding:2px 3px;color:'+(S.driveStatus==="ok"?"#1D9E75":S.driveStatus==="syncing"?"#888":S.driveStatus==="error"?"#e24b4a":"#888")+'">'+(S.driveStatus==="ok"?"💾✓":S.driveStatus==="syncing"?"💾↻":S.driveStatus==="error"?"💾✕":"💾")+'</button>':'')
+    +(camUser?'<button id="camIcon" onclick="setView(\'sync\')" title="App de Camilo — toca para ver estado" style="border:none;background:transparent;cursor:pointer;font-size:12px;padding:2px 3px;color:'+(S.cam.status==="ok"?"#1D9E75":S.cam.status==="error"?"#e24b4a":"#888")+'">'+(S.cam.status==="ok"?"🏋️✓":S.cam.status==="syncing"?"🏋️↻":S.cam.status==="error"?"🏋️✕":"🏋️")+'</button>':'')
     +(S.mesoList.length>1
       ?'<select onchange="setMeso(this.value)" style="padding:4px 8px;border-radius:8px;border:.5px solid #ccc;background:#f5f5f3;font-size:12px">'
        +S.mesoList.map((m,i)=>'<option value="'+m+'"'+(m===S.meso?' selected':'')+'>'
@@ -1126,6 +1128,7 @@ function renderSync(){
        +'<button onclick="syncAllToSheet()" style="padding:8px 18px;border-radius:8px;border:none;background:#1D9E75;color:#fff;font-size:13px;font-weight:500;cursor:pointer">Sincronizar todo al Sheet</button>'
        +(S.syncAllMsg?'<p style="margin-top:8px;font-size:12px;color:#1D9E75">'+esc(S.syncAllMsg)+'</p>':'')+'</div>'
       :'')
+    +(typeof renderCamCard==="function"?renderCamCard():'')
     +'</div>';
 }
 
@@ -1151,8 +1154,9 @@ function toggleEx(i){
   // Al cerrar (ya no hay ejercicio expandido), retomar el sync que la guarda de
   // checkDriveChanges pospuso mientras editabas.
   if(wasOpen&&S.exp===null&&typeof checkDriveChanges==="function")checkDriveChanges();
+  if(wasOpen&&S.exp===null&&typeof camPull==="function")setTimeout(camPull,4500);
 }
-function updKg(d,w,i,v,si){S.store[kgKey(d,w,i,si)]=v;saveStore();_markSheetDirty(S.meso,d,w,i,si);}
+function updKg(d,w,i,v,si){S.store[kgKey(d,w,i,si)]=v;saveStore();_markSheetDirty(S.meso,d,w,i,si);if(typeof camQueue==="function")camQueue(d,w,i,si);}
 function updNote(d,w,i,v){S.store[noteKey(d,w,i)]=v;saveStore();_markNoteDirty(S.meso,d,w,i);}
 function toggleDone(d,w){const k=doneKey(d,w);if(isDoneVal(S.store[k]))delete S.store[k];else S.store[k]="1";saveStore();render();}
 function setDayName(d,v){S.store[dnameKey(d)]=v;saveStore();}
@@ -1493,6 +1497,254 @@ async function checkDriveChanges(){
   }catch(e){console.warn("Drive poll:",e);S.driveStatus="error";updateDriveIcon();}
 }
 
+// ── Integración App Camilo (Supabase) ⇄ Planner/Sheet — v10.20 ───────────────
+// Pull: al abrir, al volver a la app y cada 60 s → cargas de Camilo al store del meso
+//       vinculado (y de ahí al Sheet por el mecanismo normal _markSheetDirty).
+// Push: al registrar una carga en el meso vinculado → se escribe en Camilo.
+// Conflicto: Camilo gana en el pull, salvo cargas del Planner aún no enviadas (pendientes).
+// Programa: "Regenerar meso desde Camilo" reescribe la pestaña del Sheet (Meso 9 = Fase 1).
+const CAM_URL="https://hbfiheeldqrvoqkzalnj.supabase.co";
+const CAM_KEY="sb_publishable_aYlH1df2gtsB7hmM5SOgqA_yPTm_SNJ";
+const CAM_LB=0.45359237;
+let camSb=null,camUser=null,camPlan=null,camBusy=false,_camPushT=null;
+S.cam={status:"off",msg:"",last:""};
+const camNum=x=>{const v=parseFloat(String(x??"").replace(",",".").split("/")[0]);return isFinite(v)?v:null;};
+const camNorm=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\s+/g," ").trim();
+const camBase=()=>+(S.store["_camBase"]||9);
+const camTab=()=>"Meso "+(camBase()+(+(camPlan&&camPlan.phase)||0));
+function camPending(){try{return JSON.parse(localStorage.getItem("tp_cam_pending")||"[]");}catch{return[];}}
+function camSetPending(a){try{localStorage.setItem("tp_cam_pending",JSON.stringify([...new Set(a)]));}catch{}}
+
+function camClient(){
+  if(camSb)return camSb;
+  if(!(window.supabase&&supabase.createClient))return null;
+  camSb=supabase.createClient(CAM_URL,CAM_KEY,{auth:{storageKey:"tp-camilo-auth",persistSession:true,autoRefreshToken:true}});
+  return camSb;
+}
+function camSetStatus(st,msg){S.cam.status=st;if(msg!==undefined)S.cam.msg=msg;updateCamIcon();if(S.view==="sync")render();}
+function updateCamIcon(){
+  const el=document.getElementById("camIcon");if(!el)return;
+  const s=S.cam.status;
+  el.textContent=s==="ok"?"🏋️✓":s==="syncing"?"🏋️↻":s==="error"?"🏋️✕":"🏋️";
+  el.style.color=s==="ok"?"#1D9E75":s==="error"?"#e24b4a":"#888";
+}
+
+async function camInit(){
+  const sb=camClient();if(!sb)return;
+  const{data}=await sb.auth.getSession();
+  camUser=data&&data.session?data.session.user:null;
+  if(camUser){camSetStatus("ok");camPull();}
+}
+async function camLogin(){
+  const sb=camClient();if(!sb){camSetStatus("error","No se pudo cargar Supabase.");return;}
+  const email=(document.getElementById("camEmail")||{}).value||"",pass=(document.getElementById("camPass")||{}).value||"";
+  if(!email||!pass){camSetStatus("off","Ingresa correo y contraseña de la app de Camilo.");return;}
+  camSetStatus("syncing","Conectando…");
+  const{data,error}=await sb.auth.signInWithPassword({email:email.trim(),password:pass});
+  if(error){camSetStatus("error","No se pudo iniciar sesión: "+error.message);return;}
+  camUser=data.user;camSetStatus("ok","Conectado como "+camUser.email);
+  camPull();
+}
+async function camLogout(){if(camSb)await camSb.auth.signOut();camUser=null;camPlan=null;camSetStatus("off","Desconectado.");}
+
+async function camFetch(){
+  const sb=camClient();
+  const[a,b]=await Promise.all([sb.from("plans").select("data").eq("user_id",camUser.id),sb.from("logs").select("data").eq("user_id",camUser.id)]);
+  if(a.error||b.error)throw new Error((a.error||b.error).message);
+  return{plan:(a.data&&a.data[0]&&a.data[0].data)||null,logs:(b.data&&b.data[0]&&b.data[0].data)||{}};
+}
+
+// Ejercicios de la fase (mismo orden que en la app de Camilo: pre, principal, post)
+function camItems(plan,fi){
+  const P=plan.program,ph=P.phases[fi],idp=ph.idp||"",saved=(plan.progsBy||{})[P.id+":"+fi];
+  const rm={...(plan.rm||{})},step=+plan.step||2.5;
+  const round=v=>Math.round(Math.round(v/step)*step*100)/100;
+  const mainPres=(m,w)=>{const sr=m.sr&&m.sr[w];if(!sr||sr==="-")return"-";
+    const t=m.top&&m.top[w]&&String(m.top[w]).match(/(\d+)\s*@\s*([\d.,]+)/);
+    const r=camNum(rm[m.name]),kg=r>0&&m.pct&&m.pct[w]?round(r*m.pct[w]):null;
+    if(t)return"Top 1x"+t[1]+" @"+t[2]+" + "+sr+" (−"+Math.round(((m.bo&&m.bo[w])||.08)*100)+"%)";
+    return sr+" @ "+Math.round(((m.pct&&m.pct[w])||0)*1000)/10+"%"+(kg?" ("+kg+" kg)":"");};
+  const mainRaw=(m,w)=>{const sr=(m.sr&&m.sr[w])||"",t=m.top&&m.top[w]&&/\d+\s*@/.test(m.top[w]),x=String(sr).match(/(\d+)\s*x\s*(.+)/);return x&&t?(+x[1]+1)+"x"+x[2]:sr;};
+  return ph.sessions.map((s,si)=>{
+    const rows=(saved&&saved[si])||s.rows.map((r,i)=>({id:idp+si+"_"+i,name:r.name,rest:r.rest||"",pos:r.pos==="pre"?"pre":"post",ss:r.ss||"",p:[...(r.p||[])]}));
+    const acc=r=>({id:r.id,name:r.name,rest:r.rest||"",det:r.ss?"Superserie "+r.ss:"",pres:w=>(r.p&&r.p[w])||"-",raw:w=>(r.p&&r.p[w])||""});
+    const items=[...rows.filter(r=>r.pos==="pre").map(acc),
+      ...(s.main?[{id:"main",name:s.main.name,rest:s.main.rest||"",det:"Principal",pres:w=>mainPres(s.main,w),raw:w=>mainRaw(s.main,w)}]:[]),
+      ...rows.filter(r=>r.pos!=="pre").map(acc)].filter(it=>(it.name||"").trim());
+    const dayName=(plan.dayNames||{})[P.id+":"+si]||s.label||s.name||(s.main&&s.main.name)||"";
+    return{si,dayName,items};
+  });
+}
+function camNW(plan,fi){const ph=plan.program.phases[fi];return Math.max(1,...ph.sessions.flatMap(s=>[(s.main&&s.main.sr||[]).length,...s.rows.map(r=>(r.p||[]).length)]));}
+
+// Meso del Planner vinculado = pestaña cuyo nombre es camTab()
+function camMid(){const t=camTab();return S.mesoList.find(m=>S.mesoMeta[m]&&String(S.mesoMeta[m].sheetName).trim()===t)||null;}
+// Mapa Planner (d,i) ⇄ Camilo (si,id): por día y nombre (con ocurrencia)
+function camMap(mid){
+  if(!camPlan||!mid)return[];
+  const pd=S.mesoMeta[mid].planData||{},out=[];
+  camItems(camPlan,+camPlan.phase||0).forEach(({si,items})=>{
+    const exs=pd[si+1]||[],used=new Set();
+    items.forEach(it=>{
+      const i=exs.findIndex((e,k)=>!used.has(k)&&camNorm(e.name)===camNorm(it.name));
+      if(i<0)return;used.add(i);out.push({d:si+1,i,si,id:it.id,raw:it.raw});
+    });
+  });
+  return out;
+}
+const camKgKey=(mid,d,w,i)=>mid==="1"?"kg-"+d+"-"+w+"-"+i:"kg-"+d+"-"+w+"-"+i+"-m"+mid;
+function camEntryKg(e){
+  if(!e||!e.s)return null;
+  const v=e.s.map(x=>camNum(x&&x.l)).filter(x=>x!=null).map(x=>e.u==="lb"?Math.round(x*CAM_LB*10)/10:x);
+  return v.length?Math.max(...v):null;
+}
+
+async function camPull(){
+  if(!camUser||camBusy)return;
+  if(S.exp!==null)return; // editando: no interrumpir
+  camBusy=true;camSetStatus("syncing");
+  try{
+    await camPushNow();
+    const{plan,logs}=await camFetch();
+    if(!plan||!plan.program){camBusy=false;camSetStatus("error","Camilo aún no te asigna programa.");return;}
+    camPlan=plan;
+    const mid=camMid();
+    if(!mid){camBusy=false;camSetStatus("ok","Falta la pestaña \""+camTab()+"\" en el Sheet: usa «Regenerar meso desde Camilo».");return;}
+    const lg=logs.log||{},pend=new Set(camPending()),nw=camNW(plan,+plan.phase||0);
+    let n=0;
+    for(const m of camMap(mid))for(let w=1;w<=nw;w++){
+      const kg=camEntryKg(lg[m.si+"|"+m.id+"|"+(w-1)]);if(kg==null)continue;
+      const k=camKgKey(mid,m.d,w,m.i);
+      if(pend.has(k))continue;
+      if(camNum(S.store[k])===kg)continue;
+      S.store[k]=String(kg);n++;
+      _markSheetDirty(mid,m.d,w,m.i);
+    }
+    if(n){saveStore();render();}
+    // aviso si Camilo cambió el programa respecto al último regenerado
+    const h=JSON.stringify([plan.progId,plan.phase,camItems(plan,+plan.phase||0).map(s=>s.items.map(it=>it.name))]);
+    const changed=S.store["_camProg"]&&S.store["_camProg"]!==h;
+    S.cam.last=new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
+    camSetStatus("ok",(n?n+" carga(s) traídas de Camilo. ":"Al día con Camilo. ")+(changed?"⚠ Camilo cambió el programa: usa «Regenerar meso desde Camilo».":""));
+  }catch(e){console.warn("Camilo pull:",e);camSetStatus("error","Error con Camilo: "+e.message);}
+  camBusy=false;
+}
+
+// Push: hook desde updKg
+function camQueue(d,w,i,si){
+  if(!camUser||si!==undefined)return;
+  const mid=camMid();if(!mid||S.meso!==mid)return;
+  camSetPending([...camPending(),camKgKey(mid,d,w,i)]);
+  if(_camPushT)clearTimeout(_camPushT);
+  _camPushT=setTimeout(()=>{_camPushT=null;camPushNow().then(()=>updateCamIcon());},2500);
+}
+async function camPushNow(){
+  const pend=camPending();if(!camUser||!pend.length)return;
+  if(!camPlan){try{camPlan=(await camFetch()).plan;}catch{return;}}
+  const mid=camMid();if(!mid)return;
+  const map={};camMap(mid).forEach(m=>map[m.d+"-"+m.i]=m);
+  try{
+    const sb=camClient();
+    const{data,error}=await sb.from("logs").select("data").eq("user_id",camUser.id);
+    if(error)throw error;
+    const fresh=(data&&data[0]&&data[0].data)||{},nl={...(fresh.log||{})};
+    const re=new RegExp("^kg-(\\d+)-(\\d+)-(\\d+)"+(mid==="1"?"":"-m"+mid)+"$");
+    let n=0;
+    for(const k of pend){
+      const x=re.exec(k);if(!x)continue;
+      const m=map[x[1]+"-"+x[3]];if(!m)continue;
+      const w=+x[2]-1,key=m.si+"|"+m.id+"|"+w,kg=camNum(S.store[k]);
+      const e=nl[key]?JSON.parse(JSON.stringify(nl[key])):null;
+      const val=v=>e&&e.u==="lb"?String(Math.round(v/CAM_LB)):String(v);
+      if(kg==null){ if(e&&e.s){e.s.forEach(s=>{if(s)s.l="";});nl[key]=e;n++;} continue; }
+      if(e&&e.s&&e.s.length){ if(camEntryKg(e)===kg)continue; e.s.forEach(s=>{if(s)s.l=val(kg);});nl[key]=e;n++; continue; }
+      const p=String(m.raw(w)).match(/(\d+)\s*x\s*([^@]*)/),cnt=p?Math.min(+p[1],10):1,reps=p&&/^\s*\d+\s*$/.test(p[2])?p[2].trim():"";
+      nl[key]={s:Array.from({length:cnt},()=>({l:String(kg),r:reps})),n:""};n++;
+    }
+    if(n){
+      const r=await sb.from("logs").upsert({user_id:camUser.id,data:{...fresh,log:nl},updated_at:new Date().toISOString()},{onConflict:"user_id"});
+      if(r.error)throw r.error;
+    }
+    camSetPending(camPending().filter(k=>!pend.includes(k)));
+    S.cam.status="ok";
+  }catch(e){console.warn("Camilo push:",e);S.cam.status="error";S.cam.msg="No se pudo enviar a Camilo (se reintenta): "+(e.message||e);}
+}
+
+// Programa: reescribe la pestaña camTab() del Sheet con el programa de Camilo
+async function camRegenerate(){
+  if(!camUser){camSetStatus("off","Conéctate primero a Camilo.");return;}
+  if(!_isNativeSheet()){camSetStatus("error","Primero importa tu Google Sheet desde Drive (paso 1).");return;}
+  if(!_tokenValid()){const ok=await _refreshTokenSilent();if(!ok){camSetStatus("error","Toca 💾 para reconectar Google y vuelve a intentar.");return;}}
+  try{
+    camSetStatus("syncing","Leyendo programa de Camilo…");
+    await camPushNow();
+    const{plan,logs}=await camFetch();if(!plan||!plan.program)throw new Error("sin programa asignado");
+    camPlan=plan;
+    const fi=+plan.phase||0,TAB=camTab();
+    if(/^meso\s*[1-8]$/i.test(TAB))throw new Error("protegido: no se escribe sobre "+TAB);
+    const lg=logs.log||{},NW=camNW(plan,fi),days=camItems(plan,fi);
+    const cell=(si,id,w)=>{const e=lg[si+"|"+id+"|"+w];if(!e)return{kg:"",obs:""};
+      const sets=(e.s||[]).filter(s=>s&&(s.l!==""||s.r!==""));const kg=camEntryKg(e);
+      return{kg:kg==null?"":String(kg),obs:[sets.map(s=>(s.l||"—")+"×"+(s.r||"?")).join(" · "),e.n].filter(Boolean).join(" — ")};};
+    const hdr=["","Descanso","Detalles"];for(let w=1;w<=NW;w++)hdr.push("S"+w,"Carga S"+w,"Observaciones");
+    const grid=[],meta=[],occ={};
+    days.forEach(({si,dayName,items})=>{
+      grid.push(["Día "+(si+1)]);meta.push(null);grid.push([dayName,...hdr.slice(1)]);meta.push(null);
+      items.forEach(it=>{const row=[it.name,it.rest,it.det];for(let w=0;w<NW;w++){const c=cell(si,it.id,w);row.push(it.pres(w),c.kg,c.obs);}
+        grid.push(row);const k=camNorm(it.name);occ[k]=(occ[k]||0)+1;meta.push({k,o:occ[k]});});
+      grid.push([]);meta.push(null);
+    });
+    const GS="https://sheets.googleapis.com/v4/spreadsheets/"+S.driveFile.id;
+    const G=async(url,opt={})=>{const r=await fetch(url,{...opt,headers:{Authorization:"Bearer "+_accessToken,"Content-Type":"application/json"}});if(!r.ok)throw new Error("Google "+r.status);return r.json();};
+    const ss=await G(GS+"?fields=sheets.properties");
+    const exists=ss.sheets.some(s=>s.properties.title===TAB);
+    // Conservar cargas del Planner que Camilo no tiene (y se enviarán a Camilo)
+    let kept=0;
+    if(exists){
+      const old=(await G(GS+"/values/"+encodeURIComponent("'"+TAB+"'"))).values||[];
+      const prev={},oc={};let wc=null;
+      for(let r=0;r<old.length;r++){const row=old[r]||[];
+        if(/^d[ií]a\s*\d+/i.test(String(row[0]||"").trim())){const h=old[r+1]||[];wc=[];
+          h.forEach((v,c)=>{const m=/^s(\d+)$/i.exec(String(v).trim());if(m)wc.push({w:+m[1],lc:/carga/i.test(h[c+1]||"")?c+1:-1});});r++;continue;}
+        const nm=String(row[0]||"").trim();if(!wc||!nm)continue;const k=camNorm(nm);oc[k]=(oc[k]||0)+1;
+        wc.forEach(({w,lc})=>{if(lc>=0)prev[k+"#"+oc[k]+"#"+w]=String(row[lc]||"").trim();});}
+      grid.forEach((row,i)=>{const m=meta[i];if(!m)return;for(let w=1;w<=NW;w++){const p=prev[m.k+"#"+m.o+"#"+w],kc=4+(w-1)*3;if(!row[kc]&&p&&camNum(p)!=null){row[kc]=p;kept++;}}});
+    }
+    if(!confirm("Regenerar la pestaña \""+TAB+"\" con el programa de Camilo"+(exists?" (se reemplaza)":" (nueva)")+"?\n"+days.length+" días · "+NW+" semanas"+(kept?"\n"+kept+" carga(s) del Planner se conservan y se envían a Camilo.":""))){camSetStatus("ok","Cancelado.");return;}
+    if(!exists)await G(GS+":batchUpdate",{method:"POST",body:JSON.stringify({requests:[{addSheet:{properties:{title:TAB}}}]})});
+    else await G(GS+"/values/"+encodeURIComponent("'"+TAB+"'")+":clear",{method:"POST",body:"{}"});
+    await G(GS+"/values/"+encodeURIComponent("'"+TAB+"'!A1")+"?valueInputOption=RAW",{method:"PUT",body:JSON.stringify({values:grid})});
+    camSetStatus("syncing","Reimportando el Sheet…");
+    const file=await _downloadSheetFile();await handleImport(file,{silent:true});await _refreshMTime();
+    S.store["_camProg"]=JSON.stringify([plan.progId,plan.phase,days.map(s=>s.items.map(it=>it.name))]);saveLocal();
+    // cargas conservadas del Planner → Camilo
+    const mid=camMid();
+    if(mid&&kept){const pend=[];camMap(mid).forEach(m=>{for(let w=1;w<=NW;w++){const k=camKgKey(mid,m.d,w,m.i);if(S.store[k]&&camEntryKg(lg[m.si+"|"+m.id+"|"+(w-1)])==null)pend.push(k);}});camSetPending([...camPending(),...pend]);await camPushNow();}
+    if(mid)setMeso(mid);
+    camSetStatus("ok","✓ \""+TAB+"\" regenerado desde Camilo.");
+  }catch(e){console.warn("Camilo regen:",e);camSetStatus("error","Error al regenerar: "+e.message);}
+}
+function setCamBase(v){const n=parseInt(v,10);if(n>=1){S.store["_camBase"]=String(n);saveLocal();camPull();}}
+
+function renderCamCard(){
+  const btn=(t,f,c)=>'<button onclick="'+f+'" style="padding:8px 14px;border-radius:8px;border:none;background:'+(c||"#378ADD")+';color:#fff;font-size:13px;font-weight:500;cursor:pointer;margin:4px 6px 0 0">'+t+'</button>';
+  const inp='style="width:100%;padding:8px 10px;margin-bottom:8px;border-radius:8px;border:.5px solid #ccc;font-size:14px;background:#fff;color:#1a1a1a"';
+  let h='<div class="syncard" style="margin-top:12px"><h3>App de Camilo</h3>';
+  if(!camUser){
+    h+='<p>Conecta tu cuenta de la app de Camilo. Las cargas se sincronizan solas en ambos sentidos.</p>'
+      +'<input id="camEmail" type="email" autocomplete="username" placeholder="Correo" '+inp+'>'
+      +'<input id="camPass" type="password" autocomplete="current-password" placeholder="Contraseña" '+inp+'>'
+      +btn("Conectar","camLogin()");
+  }else{
+    const mid=camMid();
+    h+='<p>Conectado como <b>'+esc(camUser.email)+'</b>. Fase '+(((camPlan&&+camPlan.phase)||0)+1)+' ⇄ pestaña <b>'+esc(camTab())+'</b>'+(mid?'':' (no existe aún)')+(S.cam.last?' · última sync '+esc(S.cam.last):'')+'.</p>'
+      +btn("Sincronizar ahora","camPull()","#1D9E75")+btn("Regenerar meso desde Camilo","camRegenerate()")+btn("Desconectar","camLogout()","#888")
+      +'<p style="margin-top:10px">Fase 1 corresponde a Meso <input type="number" min="1" value="'+camBase()+'" onchange="setCamBase(this.value)" style="width:56px;padding:3px 6px;border-radius:6px;border:.5px solid #ccc"></p>';
+  }
+  if(S.cam.msg)h+='<div class="msg '+(S.cam.status==="error"?"err":"ok")+'">'+esc(S.cam.msg)+'</div>';
+  return h+'</div>';
+}
+
 loadLocal();
 normStore();
 if(S.store["_mesoList"])try{S.mesoList=JSON.parse(S.store["_mesoList"]);S.meso=S.mesoList[S.mesoList.length-1];}catch{}
@@ -1515,6 +1767,9 @@ setTimeout(syncCloud,800);
 setInterval(()=>{if(!S.syncing)syncCloud();},60000);
 setTimeout(checkDriveChanges,3000);
 setInterval(checkDriveChanges,60000);
+setTimeout(camInit,1500);
+setInterval(()=>{if(camUser)camPull();},60000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&camUser)camPull();});
 </script>
 </body>
 </html>
